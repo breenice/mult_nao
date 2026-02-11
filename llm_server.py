@@ -55,7 +55,8 @@ def _json_type_to_annotation(prop: dict):
 
 
 def _make_nao_tool_with_signature(agent_name: str, tool_name: str, params_schema: dict, send_fn):
-    """Build an async tool with explicit params and type annotations. send_fn(tool_name, kwargs) is the async send."""
+    # async tool with explicit params and type annotations
+    # to send: send_fn(tool_name, kwargs)
     props = params_schema.get("properties") or {}
     required = set(params_schema.get("required") or [])
     if not props:
@@ -81,10 +82,10 @@ def _make_nao_tool_with_signature(agent_name: str, tool_name: str, params_schema
 
     params_str = ", ".join(param_parts)
     body = """
-kwargs = {k: v for k, v in locals().items() if v is not None}
-await send_fn(tool_name, kwargs)
-return str(kwargs)
-"""
+        kwargs = {k: v for k, v in locals().items() if v is not None}
+        await send_fn(tool_name, kwargs)
+        return str(kwargs)
+    """
     exec_globals = {"send_fn": send_fn, "tool_name": tool_name, "Optional": Optional}
     exec(
         f"async def _fn({params_str}):\n" + "\n".join(" " + line for line in body.strip().split("\n")),
@@ -103,7 +104,8 @@ _nao_context = None
 
 
 def _create_nao_socket(port: int):
-    """Create and connect a ZMQ REQ socket to host:port. Returns socket or None on failure."""
+    # create and connect a ZMQ REQ socket to host:port
+    # returns socket or None on failure
     global _nao_context
     if _nao_context is None:
         _nao_context = zmq.Context()
@@ -134,11 +136,35 @@ model_client = OpenAIChatCompletionClient(
 )
 
 
-async def reason_with_vision(agent_name: str, memory_agent: MemoryAgent, prompt: str, see_path: Path):
-    memory = memory_agent.run_once(prompt)
-    with open(see_path, "rb") as img_file:
-        image_b64 = base64.b64encode(img_file.read()).decode("utf-8")
+def _see_jpg_is_valid(see_path: Path) -> bool:
+    try:
+        if not see_path.exists() or not see_path.is_file():
+            return False
+        size = see_path.stat().st_size
+        # Placeholder images are tiny (e.g. 1x1 JPEG ~200 bytes); real camera frames are much larger
+        return size > 500
+    except OSError:
+        return False
 
+
+async def reason_with_vision(agent_name: str, memory_agent: MemoryAgent, prompt: str, see_path: Path):
+    print("[VISION] reason_with_vision called for %s, prompt=%r, see_path=%s" % (agent_name, prompt, see_path))
+    memory = memory_agent.run_once(prompt)
+    if not _see_jpg_is_valid(see_path):
+        print("[VISION] Skipped (see.jpg missing or too small): %s" % see_path)
+        return "No camera image available yet. The camera may not have sent a frame, or the image file is missing or too small."
+    try:
+        with open(see_path, "rb") as img_file:
+            data = img_file.read()
+        if not data:
+            print("[VISION] Skipped (empty file): %s" % see_path)
+            return "No camera image available yet."
+        image_b64 = base64.b64encode(data).decode("utf-8")
+    except OSError as e:
+        print("[VISION] Skipped (read error): %s - %s" % (see_path, e))
+        return "Could not read the camera image."
+
+    print("[VISION] Calling vision API for %s (%d bytes)" % (agent_name, len(data)))
     response = await model_client.acreate(
         messages=[
             {"role": "system", "content": f"You are {agent_name}, a NAO robot observing through a camera. Answer in 1 sentence."},

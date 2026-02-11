@@ -283,7 +283,7 @@
     "type": "function",
     "function": {
         "name": "reason_with_vision",
-        "description": "Call when you need to see or use vision. Accesses nthe camera. Key words: see, find, look. Give Nao the ability to see. Call this function to handle the rest of the planning that requires vision. It simply captures what is in front of the robot and describes it. You should use it frequently, especially after moving the head to a new direction.",
+        "description": "Call when you need to see or use vision. Accesses nthe camera. Key words: see, find, look. You should use it frequently, especially after moving the head to a new direction.",
         "parameters": {
             "type": "object",
             "properties": {
