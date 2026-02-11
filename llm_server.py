@@ -3,7 +3,7 @@ import json
 import base64
 import asyncio
 from pathlib import Path
-from typing import Optional, Any, List, Tuple
+from typing import Optional, Any, List, Tuple, Sequence
 
 import zmq
 
@@ -29,6 +29,13 @@ def _get_tool_schema(tool_name: str) -> dict:
     for t in NAO_TOOLS:
         if t.get("function", {}).get("name") == tool_name:
             return t["function"].get("parameters", {})
+    return None
+
+
+def _get_speak_tool() -> dict:
+    for t in NAO_TOOLS:
+        if t.get("function", {}).get("name") == "speak":
+            return t
     return None
 
 
@@ -142,13 +149,20 @@ def _see_jpg_is_valid(see_path: Path) -> bool:
         if not see_path.exists() or not see_path.is_file():
             return False
         size = see_path.stat().st_size
-        # Placeholder images are tiny (e.g. 1x1 JPEG ~200 bytes); real camera frames are much larger
+        # Placeholder images are tiny ~200 bytes
         return size > 500
     except OSError:
         return False
 
 
-async def reason_with_vision(agent_name: str, memory_agent: MemoryAgent, prompt: str, see_path: Path):
+async def reason_with_vision(
+    agent_name: str,
+    memory_agent: MemoryAgent,
+    prompt: str,
+    see_path: Path,
+    send_fn: Optional[Any] = None,
+):
+    # use image + prompt, must send an action (speak as fallback)
     print("[VISION] reason_with_vision called for %s, prompt=%r, see_path=%s" % (agent_name, prompt, see_path))
     memory = memory_agent.run_once(prompt)
     if not _see_jpg_is_valid(see_path):
@@ -165,10 +179,53 @@ async def reason_with_vision(agent_name: str, memory_agent: MemoryAgent, prompt:
         print("[VISION] Skipped (read error): %s - %s" % (see_path, e))
         return "Could not read the camera image."
 
+    speak_tool = _get_speak_tool()
+    if send_fn and speak_tool:
+        print("[VISION] Calling vision API (speak-only) for %s (%d bytes)" % (agent_name, len(data)))
+        client = OpenAI()
+        system = (
+            f"""You are {agent_name}, a NAO robot observing through a camera.
+            "Answer ONLY with the speak tool. Limit to 1 sentence.
+            ---- Memory ----
+            {memory}
+            """
+        )
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": system},
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image_url", "image_url": {"url": f"data:image/jpg;base64,{image_b64}"}},
+                        {"type": "text", "text": prompt},
+                    ],
+                },
+            ],
+            tools=[speak_tool],
+            tool_choice="required",
+        )
+        msg = response.choices[0].message
+        if getattr(msg, "tool_calls", None):
+            for call in msg.tool_calls:
+                name = getattr(call.function, "name", None) if hasattr(call, "function") else None
+                args_str = getattr(call.function, "arguments", None) if hasattr(call, "function") else None
+                if name == "speak" and args_str:
+                    try:
+                        args = json.loads(args_str)
+                        await send_fn("speak", args)
+                        return "Spoke to user."
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+        # Fallback if no valid speak call
+        return "Could not form a response."
+    # No send_fn or no speak tool: return text description for agent to use
     print("[VISION] Calling vision API for %s (%d bytes)" % (agent_name, len(data)))
     response = await model_client.acreate(
         messages=[
-            {"role": "system", "content": f"You are {agent_name}, a NAO robot observing through a camera. Answer in 1 sentence."},
+            {"role": "system", "content": (
+                f"You are {agent_name}, a NAO robot with a camera. Describe what you see in one sentence."
+            )},
             {"role": "user", "content": f"Vision prompt: {prompt}\nMemory: {memory}\nImage: data:image/jpg;base64,{image_b64}"}
         ]
     )
@@ -217,7 +274,7 @@ def create_nao_agent(name: str, root: Path, robot_name: str, agent_index: int, s
         tool_names.append(fn_name)
         if fn_name == "reason_with_vision":
             async def vision_tool(prompt: str) -> str:
-                return await reason_with_vision(name, robot.memory, prompt, see_path)
+                return await reason_with_vision(name, robot.memory, prompt, see_path, send_fn=send_for_this_agent)
             vision_tool.__name__ = "reason_with_vision"
             agent_tools.append(vision_tool)
         else:
@@ -237,6 +294,8 @@ def create_nao_agent(name: str, root: Path, robot_name: str, agent_index: int, s
 
             Use your tools to interact with the world. Available tools (from tools.json): {tool_list_str}.
             Always respond with tool calls only.
+
+            When you use reason_with_vision: the result describes what the camera sees. You must then use that result to make follow-up tool calls in the same turn—e.g. call speak() to report what you saw to the user, or wave()/nod() if you see a person. Do not finish your turn with only the vision result; chain into at least one action (speak, wave, etc.) so the user gets a response or the robot acts on what it saw.
         """,
         reflect_on_tool_use=True,
         model_client_stream=True
@@ -247,6 +306,79 @@ def extract_text(result):
         if hasattr(msg, "content") and isinstance(msg.content, str) and msg.content.strip():
             return msg.content
     return ""
+
+
+def _action_tool_names() -> frozenset:
+    # all tools executable by nao client
+    names = set()
+    for t in NAO_TOOLS:
+        name = t.get("function", {}).get("name")
+        if name and name != "reason_with_vision":
+            names.add(name)
+    return frozenset(names)
+
+
+def _get_vision_result_and_followup(messages: Sequence[Any]) -> Tuple[Optional[str], bool]:
+    """
+    Walk result.messages in order. Return (vision_result, had_follow_up_action).
+    If reason_with_vision was called, vision_result is its last return value (string).
+    had_follow_up_action is True if any other tool from tools.json was called after the last reason_with_vision.
+    """
+    action_tools = _action_tool_names()
+    vision_result = None
+    had_follow_up_action = False
+    pending_request_names = []
+
+    for msg in messages:
+        try:
+            type_name = getattr(msg, "type", None) or type(msg).__name__
+        except Exception:
+            type_name = ""
+        try:
+            content = getattr(msg, "content", None)
+        except Exception:
+            content = None
+
+        if "ToolCallRequest" in type_name or type_name == "tool_call_request":
+            if isinstance(content, list):
+                names = []
+                for call in content:
+                    name = None
+                    if isinstance(call, dict):
+                        name = call.get("name") or (call.get("function") or {}).get("name")
+                    elif hasattr(call, "name"):
+                        name = getattr(call, "name", None)
+                    elif hasattr(call, "function"):
+                        name = getattr(getattr(call, "function", None), "name", None)
+                    names.append(name or "")
+                if names:
+                    vision_index = -1
+                    for i, n in enumerate(names):
+                        if n == "reason_with_vision":
+                            vision_index = i
+                            had_follow_up_action = False
+                        elif vision_index >= 0 and n in action_tools:
+                            had_follow_up_action = True
+                    pending_request_names = names
+
+        elif ("ToolCallExecution" in type_name or type_name == "tool_call_execution") and pending_request_names:
+            if isinstance(content, list):
+                results = []
+                for res in content:
+                    result_text = None
+                    if isinstance(res, dict):
+                        result_text = res.get("result") or res.get("content") or res.get("output")
+                    elif hasattr(res, "result"):
+                        result_text = getattr(res, "result", None)
+                    elif hasattr(res, "content"):
+                        result_text = getattr(res, "content", None)
+                    results.append(result_text if isinstance(result_text, str) else "")
+                for i, name in enumerate(pending_request_names):
+                    if i < len(results) and name == "reason_with_vision" and results[i]:
+                        vision_result = results[i]
+            pending_request_names = []
+
+    return (vision_result, had_follow_up_action)
 
 
 # ====== Multi-Agent Conversation ======
