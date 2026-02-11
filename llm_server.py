@@ -118,12 +118,12 @@ def _create_nao_socket(port: int):
         return None
 
 
-def _send_nao_command_sync(tool: str, args: dict, socket) -> str:
+def _send_nao_command_sync(tool: str, args: dict, socket, agent_index: int = 0) -> str:
     """Blocking send to nao_client. Args filtered by tools.json schema. Returns reply or '' if socket is None."""
     if socket is None:
         return ""
     args = _filter_args_by_schema(tool, args)
-    cmd = {"tool": tool, "args": args}
+    cmd = {"agent": agent_index, "tool": tool, "args": args}
     socket.send_string(json.dumps(cmd))
     return socket.recv_string()
 
@@ -149,8 +149,9 @@ async def reason_with_vision(agent_name: str, memory_agent: MemoryAgent, prompt:
 
 
 # ====== NAO Agent Factory ======
-def create_nao_agent(name: str, root: Path, robot_name: str, port: int, socket):
-    """Create a NAO agent with a physical robot (robot_name) and its own socket (port)."""
+def create_nao_agent(name: str, root: Path, robot_name: str, agent_index: int, socket):
+    # create a NAO agent with a physical robot (robot_name)
+    # uses shared socket with agent_index in each message
     folder = ensure_input_folder(root, name)
     personality_path = str(folder / "personality.json")
     memory_path = str(folder / "memory")
@@ -172,7 +173,9 @@ def create_nao_agent(name: str, root: Path, robot_name: str, port: int, socket):
         print("[ACTION] %s (%s) -> %s %s" % (name, robot_name + (" text" if is_text else ""), tool, args))
         loop = asyncio.get_event_loop()
         try:
-            reply = await loop.run_in_executor(None, lambda: _send_nao_command_sync(tool, args, socket))
+            reply = await loop.run_in_executor(
+                None, lambda: _send_nao_command_sync(tool, args, socket, agent_index)
+            )
             if reply:
                 print("[NAO] %s" % reply)
         except Exception as e:
@@ -221,7 +224,8 @@ def extract_text(result):
 
 # ====== Multi-Agent Conversation ======
 def _load_agents_from_file(path: Path) -> List[Tuple[str, str]]:
-    """Load list of (display_name, robot_name) from JSON file. Returns [] if file missing or invalid."""
+    # load list of (display_name, robot_name) from JSON file
+    # returns [] if file missing or invalid
     if not path.exists() or path.stat().st_size == 0:
         return []
     try:
@@ -268,11 +272,10 @@ async def multi_nao_chat(agents_list: List[Tuple[str, str]]):
     if not agents_list:
         raise ValueError("give at least one --agent NAME ROBOT (e.g. --agent <display-name> <physical-robot-name> --agent Casper JOURNEY)")
     root = Path(__file__).resolve().parent
+    sock = _create_nao_socket(NAO_BASE_PORT)
     nao_agents = []
     for i, (agent_name, robot_name) in enumerate(agents_list):
-        port = NAO_BASE_PORT + i
-        sock = _create_nao_socket(port)
-        nao_agents.append(create_nao_agent(agent_name, root, robot_name, port, sock))
+        nao_agents.append(create_nao_agent(agent_name, root, robot_name, i, sock))
 
     human = UserProxyAgent(name="Human", input_func=input)
 

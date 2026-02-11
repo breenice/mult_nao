@@ -38,7 +38,7 @@ parser.add_argument("--connection", choices=["text", "speech"], default="speech"
 parser.add_argument("--mode", choices=["print", "execute"], default="execute")
 parser.add_argument("--port", type=int, default=None, help="ZMQ port (default: try from %s)" % _BASE_PORT)
 parser.add_argument("--robot", type=str, default="ANGEL")
-parser.add_argument("--multi", action="store_true", help="run multi-port mode (one process, N ports, text-only)")
+parser.add_argument("--multi", action="store_true", help="run single-port server (one port, dispatch by agent index from config)")
 parser.add_argument("--config", type=str, default=None,
                     help="Path to agents JSON file (for --multi or --slot). Default: project_root/%s" % getattr(nao_config, "AGENTS_FILE", "agents.json"))
 parser.add_argument("--slot", type=int, default=None, metavar="N",
@@ -110,38 +110,32 @@ def _ensure_input_folder(root, name):
 
 
 def run_multi_port(args, agent_list=None):
-    # 1 terminal, N ports (one per agent); ports assigned in order from NAO_BASE_PORT.
-    # text-only mode: receive and print formatted as [robot:port]
+    # Single port (NAO_BASE_PORT); receive messages with agent index, dispatch by agent id.
     if agent_list is None:
         agent_list = [tuple(pair) for pair in args.agent] if getattr(args, "agent", None) else []
     if not agent_list:
-        raise SystemExit("Multi-port mode requires agents from --config or at least one --agent NAME ROBOT (e.g. --multi --agent Dearanna ANGEL --agent Casper JOURNEY)")
+        raise SystemExit("Multi mode requires agents from --config or at least one --agent NAME ROBOT (e.g. --multi --agent Dearanna ANGEL --agent Casper JOURNEY)")
     base_port = getattr(nao_config, "NAO_BASE_PORT", 5555)
     port_max_offset = getattr(nao_config, "NAO_PORT_MAX_OFFSET", 9)
     for agent_name, robot_name in agent_list:
         _ensure_input_folder(PROJECT_ROOT, agent_name)
+    mode = getattr(args, "mode", "print")
+    connection = getattr(args, "connection", "text")
     ctx = zmq.Context()
-    listeners = []
-    socket_to_info = {}
-    for i, (agent_name, robot_name) in enumerate(agent_list):
-        port = base_port + i
-        start_port = port
-        for offset in range(0, port_max_offset + 1):
-            try:
-                port = start_port + offset
-                sock = ctx.socket(zmq.REP)
-                sock.bind("tcp://*:" + str(port))
-                listeners.append((sock, robot_name, port))
-                socket_to_info[sock] = (robot_name, port)
-                break
-            except zmq.ZMQError:
-                if offset >= port_max_offset:
-                    raise
-    poller = zmq.Poller()
-    for (sock, _, _) in listeners:
-        poller.register(sock, zmq.POLLIN)
-    print("[nao_client] Multi-port mode: %s" % ", ".join("%s:%s" % (robot_name, p) for (_, robot_name, p) in listeners))
+    sock = ctx.socket(zmq.REP)
+    port = base_port
+    for offset in range(0, port_max_offset + 1):
+        try:
+            port = base_port + offset
+            sock.bind("tcp://*:" + str(port))
+            break
+        except zmq.ZMQError:
+            if offset >= port_max_offset:
+                raise
+    print("[nao_client] Single-port mode: %s (agents: %s)" % (port, ", ".join("%s" % a[0] for a in agent_list)))
     state = {"running": True}
+    poller = zmq.Poller()
+    poller.register(sock, zmq.POLLIN)
 
     def shutdown_multi(sig, frame):
         state["running"] = False
@@ -150,29 +144,59 @@ def run_multi_port(args, agent_list=None):
     try:
         while state["running"]:
             socks = dict(poller.poll(500))
-            for sock in socks:
-                if socks[sock] != zmq.POLLIN:
-                    continue
-                robot_name, port = socket_to_info[sock]
-                message = sock.recv_string().strip()
+            if sock not in socks or socks[sock] != zmq.POLLIN:
+                continue
+            message = sock.recv_string().strip()
+            try:
                 msg = json.loads(message)
-                tool = str(msg.get("tool", ""))
-                args = msg.get("args", {})
-                print("[%s:%s] [TEXT] tool=%s args=%s" % (robot_name, port, tool, args))
+            except (ValueError, TypeError):
+                sock.send_string("Error: invalid JSON")
+                continue
+            agent_index = msg.get("agent", 0)
+            try:
+                agent_index = int(agent_index)
+            except (TypeError, ValueError):
+                agent_index = 0
+            if agent_index < 0 or agent_index >= len(agent_list):
+                sock.send_string("Error: agent index %s out of range (0..%s)" % (agent_index, len(agent_list) - 1))
+                continue
+            display_name, robot_name = agent_list[agent_index]
+            tool = str(msg.get("tool", ""))
+            args = msg.get("args", {})
+            if not tool:
+                sock.send_string("Error: missing tool")
+                continue
+            print("[%s] [TEXT] tool=%s args=%s" % (display_name, tool, args))
+            if connection == "text" or robot_name not in ROBOT_IPS:
+                sock.send_string("Message received by NAO")
+                continue
+            if mode == "execute":
+                try:
+                    robot_ip = ROBOT_IPS[robot_name]
+                    actions.init(robot_ip, ZMQ_PORT)
+                    arg_dict = dict(args)
+                    for k, v in arg_dict.items():
+                        if isinstance(v, unicode):
+                            arg_dict[k] = v.encode("utf-8")
+                    funct_call = getattr(actions, tool)
+                    funct_call(**arg_dict)
+                    sock.send_string("Action executed")
+                except Exception as e:
+                    sock.send_string("Error executing: " + str(e))
+            else:
                 sock.send_string("Message received by NAO")
     except KeyboardInterrupt:
-        running = False
-    for (sock, _, _) in listeners:
-        try:
-            sock.close()
-        except Exception:
-            pass
+        pass
+    try:
+        sock.close()
+    except Exception:
+        pass
     ctx.term()
 
 
 args = parser.parse_args()
 
-# Resolve default agents config path
+# default agents config path
 if getattr(args, "config", None) is None:
     args.config = os.path.join(PROJECT_ROOT, getattr(nao_config, "AGENTS_FILE", "agents.json"))
 
