@@ -4,6 +4,7 @@ import base64
 import asyncio
 from pathlib import Path
 from typing import Optional, Any, List, Tuple, Sequence
+import speech_recognition as sr
 
 import zmq
 
@@ -418,14 +419,73 @@ def _parse_agent_args() -> List[Tuple[str, str]]:
         default=default_agents_path,
         help="Path to agents JSON file (default: %s)" % AGENTS_FILE,
     )
+    parser.add_argument(
+        "--listen",
+        action="store_true",
+        help="Use microphone for human turn: record until silence, transcribe with Whisper.",
+    )
     args = parser.parse_args()
     if args.agent:
-        return [tuple(pair) for pair in args.agent]
-    agents_list = _load_agents_from_file(args.config)
-    return agents_list
+        agents_list = [tuple(pair) for pair in args.agent]
+    else:
+        agents_list = _load_agents_from_file(args.config)
+    return agents_list, args.listen
 
 
-async def multi_nao_chat(agents_list: List[Tuple[str, str]]):
+_LISTEN_WAV_PATH = Path(__file__).resolve().parent / "input" / "listen.wav"
+_LISTEN_TIMEOUT = 5
+_LISTEN_PHRASE_TIME_LIMIT = 10
+_LISTEN_MAX_EMPTY_RETRIES = 5
+
+
+def listen_for_human_input(prompt: str) -> str:
+    # record from microphone until user stops speaking, when --listen is set
+    # transcribe with Whisper
+
+    recognizer = sr.Recognizer()
+    client = OpenAI()
+    _LISTEN_WAV_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+    for attempt in range(_LISTEN_MAX_EMPTY_RETRIES):
+        print(prompt)
+        print("Listening... (speak now; recording stops when you pause)")
+        try:
+            with sr.Microphone() as source:
+                audio = recognizer.listen(
+                    source,
+                    timeout=_LISTEN_TIMEOUT,
+                    phrase_time_limit=_LISTEN_PHRASE_TIME_LIMIT,
+                )
+        except sr.WaitTimeoutError:
+            print("No speech detected. Try again.")
+            continue
+        except OSError as e:
+            print("[Listen] Microphone error: %s. Try again." % e)
+            continue
+
+        wav_data = audio.get_wav_data()
+        _LISTEN_WAV_PATH.write_bytes(wav_data)
+
+        try:
+            with open(_LISTEN_WAV_PATH, "rb") as f:
+                transcript = client.audio.transcriptions.create(
+                    model="whisper-1",
+                    file=f,
+                    response_format="text",
+                )
+        except Exception as e:
+            print("[Listen] Transcription error: %s. Try again." % e)
+            continue
+
+        if transcript and isinstance(transcript, str) and transcript.strip():
+            return transcript.strip()
+        print("No speech detected. Try again.")
+
+    print("[Listen] Max retries reached. Falling back to keyboard input.")
+    return input(prompt)
+
+
+async def multi_nao_chat(agents_list: List[Tuple[str, str]], use_listen: bool = False):
     if not agents_list:
         raise ValueError("give at least one --agent NAME ROBOT (e.g. --agent <display-name> <physical-robot-name> --agent Casper JOURNEY)")
     root = Path(__file__).resolve().parent
@@ -434,7 +494,8 @@ async def multi_nao_chat(agents_list: List[Tuple[str, str]]):
     for i, (agent_name, robot_name) in enumerate(agents_list):
         nao_agents.append(create_nao_agent(agent_name, root, robot_name, i, sock))
 
-    human = UserProxyAgent(name="Human", input_func=input)
+    input_func = listen_for_human_input if use_listen else input
+    human = UserProxyAgent(name="Human", input_func=input_func)
 
     agents = [human] + nao_agents
 
@@ -465,5 +526,5 @@ async def multi_nao_chat(agents_list: List[Tuple[str, str]]):
 
 # ====== Run ======
 if __name__ == "__main__":
-    agents_list = _parse_agent_args()
-    asyncio.run(multi_nao_chat(agents_list))
+    agents_list, use_listen = _parse_agent_args()
+    asyncio.run(multi_nao_chat(agents_list, use_listen=use_listen))
