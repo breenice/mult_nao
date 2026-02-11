@@ -1,0 +1,301 @@
+[
+    {
+    "type": "function",
+    "function": {
+        "name": "speak",
+        "description": "Make Nao robot speak",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "message": {
+                    "type": "string",
+                    "description": "This is the text Nao will say"
+                },
+                "timestep": {
+                    "type": "integer",
+                    "description": "Time step for synchronized execution"
+                }
+            },
+            "required": ["message"],
+            "additionalProperties": false
+            }
+        }
+    },
+    {
+    "type": "function",
+    "function": {
+        "name": "rest",
+        "description": "Makes Nao robot reset to stable posture",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "timestep": {
+                    "type": "integer",
+                    "description": "Time step for synchronized execution"
+                }
+            }   
+        }
+        }
+    },
+    {
+    "type": "function",
+    "function": {
+        "name": "wave",
+        "description": "Makes Nao robot wave to the client. A greeting to new clients.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "hand": { "type": "string", "description": "define which hand to wave with" },
+                "timestep": {
+                    "type": "integer",
+                    "description": "Time step for synchronized execution"
+                }
+            },
+            "required": ["hand"],
+            "additionalProperties": false
+            }
+    }
+    },
+    {
+    "type": "function",
+    "function": {
+        "name": "sit",
+        "description": "Makes Nao robot sit down with butt on the floor. Can make the user feel more relaxed.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "timestep": {
+                    "type": "integer",
+                    "description": "Time step for synchronized execution"
+                }
+            }   
+        }
+        }
+    },
+    {
+    "type": "function",
+    "function": {
+        "name": "stand",
+        "description": "Makes Nao robot stand up",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "timestep": {
+                    "type": "integer",
+                    "description": "Time step for synchronized execution"
+                }
+            }   
+        }
+        }
+    },
+        {
+    "type": "function",
+    "function": {
+        "name": "nod",
+        "description": "Makes Nao robot nod head to agree with the user.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "timestep": {
+                    "type": "integer",
+                    "description": "Time step for synchronized execution"
+                }
+            }   
+        }
+        }
+    },
+    {
+    "type": "function",
+    "function": {
+        "name": "shake_hand",
+        "description": "Makes Nao robot prentend shake client's hand. Can be used to greet the user and make them feel welcome."
+        },
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "hand": { "type": "string", "description": "define which hand to shake with" },
+                "timestep": {
+                    "type": "integer",
+                    "description": "Time step for synchronized execution"
+                }
+            },
+            "required": ["hand"],
+            "additionalProperties": false
+            }
+    },
+    {
+    "type": "function",
+    "function": {
+        "name": "walk",
+        "description": "Makes Nao robot walk with specified (x, y in meters) and theta(in radians). DO NOT include x or y values larger than 0.3. Instead, send durections in smaller steps like walk(0.3,0,0), walk(0, 0.3,0), walk(0.3,0,math.pi/2) to make it walk forward and then turn left for example.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "x": { "type": "number", "description": "Distance to walk forward in meters" },
+                "y": { "type": "number", "description": "Distance to walk sideways in meters" },
+                "theta": { "type": "number", "description": "Rotation in radians" },
+                "timestep": {
+                    "type": "integer",
+                    "description": "Time step for synchronized execution"
+                }
+            },
+            "required": ["x", "y", "theta"],
+            "additionalProperties": false
+            }
+        }
+    },
+    {
+    "type": "function",
+    "function": {
+        "name": "adjust_volume",
+        "description": "Adjusts the volume that the Nao robot speaks at. The default volume is set at 20.0. Please set the volume before calling the speak action you wish to change the volume for.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "level": { "type": "number", "description": "float vvalue that the speaking volume is set to" },
+                "timestep": {
+                    "type": "integer",
+                    "description": "Time step for synchronized execution"
+                }
+            },
+            "required": ["x", "y", "z"],
+            "additionalProperties": false
+            }
+        }
+    },
+    {
+    "type": "function",
+    "function": {
+        "name": "track_face",
+        "description": "Enable/diusables the nao to follow the user's face with face tracking",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "enable": { "type": "boolean", "description": "boolean value to enable or disable face tracking" },
+                "timestep": {
+                    "type": "integer",
+                    "description": "Time step for synchronized execution"
+                }
+            },
+            "required": ["enable"],
+            "additionalProperties": false
+            }
+        }
+    },
+    {
+    "type": "function",
+    "function": {
+        "name": "point_at",
+        "description": "Can point with robot hand at anything to emphasize an object in the room to the client. Moves robot arm with specifed roll, pitch, yaw open or closed hand. Can be used to point or hold things. Must call rest action function to return arm to normal position",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "x": { "type": "number", "description": "Distance to move arm in meters on x axis" },
+                "y": { "type": "number", "description": "Distance to move armin meters on y axis" },
+                "z": { "type": "number", "description": "Distance to  move arm in meters on z axis" },
+                "open": { "type": "boolean", "description": "boolean value to open or close hand" },
+                "side": { "type": "string", "description": "value can either be left or right to specify which side to move arm" },
+                "timestep": {
+                    "type": "integer",
+                    "description": "Time step for synchronized execution"
+                }
+            },
+            "required": ["x","y","z","open","side"],
+            "additionalProperties": false
+            }
+        }
+    },
+    {
+    "type": "function",
+    "function": {
+        "name": "rest_arm",
+        "description": "Resets both NAO robot arms in a resting position for when an arm action is complete",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "timestep": {
+                    "type": "integer",
+                    "description": "Time step for synchronized execution"
+                }
+            },
+            "required": [],
+            "additionalProperties": false
+            }
+        }
+    },
+    {
+    "type": "function",
+    "function": {
+        "name": "rest_body",
+        "description": "Resets entire NAO body in a resting position for when an posture action is complete",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "timestep": {
+                    "type": "integer",
+                    "description": "Time step for synchronized execution"
+                }
+            },
+            "required": [],
+            "additionalProperties": false
+            }
+        }
+    },
+    {
+    "type": "function",
+    "function": {
+        "name": "move_head",
+        "description": "Use to look and change your visual perception of the room. Helps the Nao look around. Moves robot head with specifed pitch, yaw to look at different things. A prompt may be provided to instruct the nao robot with the updated head (camera) position",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "x": { "type": "number", "description": "Distance to turn head left and right in radians" },
+                "z": { "type": "number", "description": "Distance to  tilt head in radians up and down" },
+                "timestep": {
+                    "type": "integer",
+                    "description": "Time step for synchronized execution"
+                },
+                "prompt": {"type": "string", "description": "new prompt to specify things to describe or look for. the response will answer this prompt"}
+            },
+            "required": ["x","z", "prompt"],
+            "additionalProperties": false
+            }
+        }
+    },
+    {
+    "type": "function",
+    "function": {
+        "name": "wait",
+        "description": "makes the robot pause for a specified amount of time",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "seconds": {"type": "integer", "description": "time in seconds to pause the robot"},
+                "timestep": {
+                    "type": "integer",
+                    "description": "Time step for synchronized execution"
+                }
+                }
+            }
+        }
+    },
+    {
+    "type": "function",
+    "function": {
+        "name": "reason_with_vision",
+        "description": "Call when you need to see or use vision. Accesses nthe camera. Key words: see, find, look. Give Nao the ability to see. Call this function to handle the rest of the planning that requires vision. It simply captures what is in front of the robot and describes it. You should use it frequently, especially after moving the head to a new direction.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "prompt": { "type": "string", "description": "prompt to direct nao on what to observe or describe" },
+                "timestep": {
+                    "type": "integer",
+                    "description": "Time step for synchronized execution"
+                }
+            },
+            "required": ["prompt"],
+            "additionalProperties": false
+            }
+        }
+    }
+]

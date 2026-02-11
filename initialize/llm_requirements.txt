@@ -1,0 +1,14 @@
+openai
+pyzmq
+tinydb
+autogen-agentchat
+autogen-ext[openai]
+unidecode
+gTTS
+playsound
+# Used by llm_server via memory_agent / personality (if run in same env):
+python-dotenv
+langchain-core
+langchain-openai
+langgraph
+langchain-chroma
