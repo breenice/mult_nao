@@ -1,0 +1,25 @@
+{
+    "big5": {
+      "openness": {
+        "neg": "conventional, practical, prefers routine, resistant to change, narrow interests, skeptical of new ideas",
+        "pos": "art, aware of one's own feelings, unpredictable, unusual ideas, curiosity, imagination, lack of focus, risk taking"
+      },
+      "conscientiousness": {
+        "neg": "disorganized, careless, unreliable, impulsive, messy, procrastinates, lacks direction",
+        "pos": "self disciplined, dutiful, strong direction, neat, reliable, detail oriented, prepared"
+      },
+      "extraversion": {
+        "neg": "reserved, quiet, solitary, avoids social interaction, prefers depth over breadth, low energy",
+        "pos": "external world engagement, action oriented, likely to start conversation/be around people/be engaged, breadth > depth of activities"
+      },
+      "agreeableness": {
+        "neg": "will not compromise or adjust for others, competitive, critical, confrontational, distrustful, prioritizes self-interest, less empathetic",
+        "pos": "helpful, compromise own interests for social harmony, leadership, soft heart, sympathize with others"
+      },
+      "neuroticism": {
+        "neg": "emotionally stable, calm, resilient, low anxiety, steady mood, not easily stressed",
+        "pos": "will not cooperate, anger, anxiety, depression, emotional instability, reactive, easily stressed out, mood swings"
+      }
+    }
+  }
+  

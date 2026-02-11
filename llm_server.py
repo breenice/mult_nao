@@ -6,12 +6,12 @@ from pathlib import Path
 from openai import OpenAI
 from tinydb import TinyDB
 
-from helpers.personality_module import PersonalityEngine
+from helpers.personality.personality_module import PersonalityEngine
 from helpers.memory.memory_agent import MemoryAgent
 from helpers.input_names import ensure_input_folder
 from autogen_agentchat.agents import AssistantAgent, UserProxyAgent 
 
-from robot_agent_virtual import RobotAgent 
+from helpers.robot_agent_virtual import RobotAgent 
 from autogen_ext.models.openai import OpenAIChatCompletionClient
 
 

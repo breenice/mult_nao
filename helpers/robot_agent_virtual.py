@@ -2,11 +2,15 @@
 import json
 import time
 import argparse
+from pathlib import Path
 from enum import Enum
 from openai import OpenAI
 
-from memory_agent import MemoryAgent
-from personality_module import PersonalityEngine
+from helpers.memory.memory_agent import MemoryAgent
+from helpers.personality.personality_module import PersonalityEngine
+
+_HELPERS_DIR = Path(__file__).resolve().parent
+DEFAULT_BIG5_PATH = str(_HELPERS_DIR / "personality" / "big5.json")
 
 
 parser = argparse.ArgumentParser()
@@ -46,7 +50,7 @@ class RobotAgent:
         self.name = name
         self.client = client
         self.personality = PersonalityEngine(
-            big5_path="big5.json",
+            big5_path=DEFAULT_BIG5_PATH,
             personality_path=personality_path
         )
         self.memory = MemoryAgent(db_path=memory_path)
@@ -83,12 +87,13 @@ class RobotAgent:
 
 
 if __name__ == "__main__":
+    root = Path(__file__).resolve().parent.parent
     client = OpenAI()
     agent = RobotAgent(
         name="Dearana",
         client=client,
-        personality_path="personality.json",
-        memory_path="./memory_db/dearana"
+        personality_path=str(root / "input" / "Dearana" / "personality.json"),
+        memory_path=str(root / "input" / "Dearana" / "memory")
     )
 
     state = AgentState.LISTEN
