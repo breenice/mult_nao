@@ -81,14 +81,15 @@ def _make_nao_tool_with_signature(agent_name: str, tool_name: str, params_schema
             param_parts.append(f"{pname}: Optional[{ann_name}] = None")
 
     params_str = ", ".join(param_parts)
-    body = """
-        kwargs = {k: v for k, v in locals().items() if v is not None}
-        await send_fn(tool_name, kwargs)
-        return str(kwargs)
-    """
+    body_lines = [
+        "kwargs = {k: v for k, v in locals().items() if v is not None}",
+        "await send_fn(tool_name, kwargs)",
+        "return str(kwargs)",
+    ]
+    body = "\n".join("    " + line for line in body_lines)
     exec_globals = {"send_fn": send_fn, "tool_name": tool_name, "Optional": Optional}
     exec(
-        f"async def _fn({params_str}):\n" + "\n".join(" " + line for line in body.strip().split("\n")),
+        f"async def _fn({params_str}):\n{body}",
         exec_globals,
         local := {},
     )
