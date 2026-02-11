@@ -39,8 +39,31 @@ parser.add_argument("--mode", choices=["print", "execute"], default="execute")
 parser.add_argument("--port", type=int, default=None, help="ZMQ port (default: try from %s)" % _BASE_PORT)
 parser.add_argument("--robot", type=str, default="ANGEL")
 parser.add_argument("--multi", action="store_true", help="run multi-port mode (one process, N ports, text-only)")
+parser.add_argument("--config", type=str, default=None,
+                    help="Path to agents JSON file (for --multi or --slot). Default: project_root/%s" % getattr(nao_config, "AGENTS_FILE", "agents.json"))
+parser.add_argument("--slot", type=int, default=None, metavar="N",
+                    help="Single-port mode for slot N (0-based) from agents config; uses port BASE+N and that entry's robot")
 parser.add_argument("--agent", nargs=2, action="append", metavar=("NAME", "ROBOT"),
-                    help="For --multi: agent name and robot name, repeatable. Ports assigned in order (e.g. --agent Dearanna ANGEL --agent Casper JOURNEY)")
+                    help="For --multi: agent name and robot name, repeatable. Overrides --config when provided.")
+
+# ----- Load agents from JSON file (same format as llm_server) -----
+def _load_agents_from_file(path):
+    """Load list of (display_name, robot_name) from JSON. Returns [] if file missing or invalid."""
+    if not path or not os.path.isfile(path):
+        return []
+    try:
+        with open(path, "r") as f:
+            data = json.load(f)
+    except (ValueError, IOError):
+        return []
+    if not isinstance(data, list):
+        return []
+    result = []
+    for item in data:
+        if isinstance(item, dict) and "display" in item and "robot" in item:
+            result.append((str(item["display"]).strip(), str(item["robot"]).strip()))
+    return result
+
 
 # ----- Input folder for this name: create if first time (personality, see.jpg, sound.wav) -----
 def _safe_folder_name(name):
@@ -86,12 +109,13 @@ def _ensure_input_folder(root, name):
     return folder
 
 
-def run_multi_port(args):
+def run_multi_port(args, agent_list=None):
     # 1 terminal, N ports (one per agent); ports assigned in order from NAO_BASE_PORT.
     # text-only mode: receive and print formatted as [robot:port]
-    agent_list = [tuple(pair) for pair in args.agent] if getattr(args, "agent", None) else []
+    if agent_list is None:
+        agent_list = [tuple(pair) for pair in args.agent] if getattr(args, "agent", None) else []
     if not agent_list:
-        raise SystemExit("Multi-port mode requires at least one --agent NAME ROBOT (e.g. --multi --agent Dearanna ANGEL --agent Casper JOURNEY)")
+        raise SystemExit("Multi-port mode requires agents from --config or at least one --agent NAME ROBOT (e.g. --multi --agent Dearanna ANGEL --agent Casper JOURNEY)")
     base_port = getattr(nao_config, "NAO_BASE_PORT", 5555)
     port_max_offset = getattr(nao_config, "NAO_PORT_MAX_OFFSET", 9)
     for agent_name, robot_name in agent_list:
@@ -147,9 +171,29 @@ def run_multi_port(args):
 
 
 args = parser.parse_args()
+
+# Resolve default agents config path
+if getattr(args, "config", None) is None:
+    args.config = os.path.join(PROJECT_ROOT, getattr(nao_config, "AGENTS_FILE", "agents.json"))
+
 if args.multi:
-    run_multi_port(args)
+    agent_list = _load_agents_from_file(args.config)
+    if getattr(args, "agent", None):
+        agent_list = [tuple(pair) for pair in args.agent]
+    if not agent_list:
+        sys.exit("Multi-port mode requires agents from --config file or at least one --agent NAME ROBOT")
+    run_multi_port(args, agent_list)
     sys.exit(0)
+
+# --slot: single-port mode for one entry from agents config
+if getattr(args, "slot", None) is not None:
+    agent_list = _load_agents_from_file(args.config)
+    if not agent_list or args.slot < 0 or args.slot >= len(agent_list):
+        sys.exit("--slot %s requires a valid agents config with an entry at that index (0..%s)" % (args.slot, len(agent_list) - 1 if agent_list else 0))
+    args.display_name = agent_list[args.slot][0]
+    args.robot = agent_list[args.slot][1]
+    base_port = getattr(nao_config, "NAO_BASE_PORT", 5555)
+    args.port = base_port + args.slot
 
 # single-port mode ========
 connection = args.connection
@@ -171,7 +215,8 @@ else:
         print("[nao_client] Robot '%s' not in ROBOT_IPS; assuming text connection." % ROBOT_NAME)
 
 # Gizmo is the default robot name for text mode (no physical robot Gizmo exists)
-INPUT_FOLDER_NAME = "Gizmo" if connection == "text" else ROBOT_NAME
+# For --slot mode, use display name so input folder matches llm_server
+INPUT_FOLDER_NAME = getattr(args, "display_name", None) or ("Gizmo" if connection == "text" else ROBOT_NAME)
 INPUT_FOLDER = _ensure_input_folder(PROJECT_ROOT, INPUT_FOLDER_NAME)
 print("[%s] Connection: %s" % (ROBOT_NAME, connection))
 print("[%s] ROBOT_IP: %s" % (ROBOT_NAME, ROBOT_IP))

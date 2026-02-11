@@ -16,7 +16,7 @@ from helpers.input_names import ensure_input_folder
 from autogen_agentchat.agents import AssistantAgent, UserProxyAgent
 
 from helpers.robot_agent_virtual import RobotAgent
-from helpers.nao_config import ROBOT_IPS, NAO_BASE_PORT
+from helpers.nao_config import ROBOT_IPS, NAO_BASE_PORT, AGENTS_FILE
 from autogen_ext.models.openai import OpenAIChatCompletionClient
 
 _TOOLS_JSON_PATH = Path(__file__).resolve().parent / "helpers" / "tools.json"
@@ -220,19 +220,48 @@ def extract_text(result):
 
 
 # ====== Multi-Agent Conversation ======
+def _load_agents_from_file(path: Path) -> List[Tuple[str, str]]:
+    """Load list of (display_name, robot_name) from JSON file. Returns [] if file missing or invalid."""
+    if not path.exists() or path.stat().st_size == 0:
+        return []
+    try:
+        with open(path, "r") as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return []
+    if not isinstance(data, list):
+        return []
+    result = []
+    for item in data:
+        if isinstance(item, dict) and "display" in item and "robot" in item:
+            result.append((str(item["display"]).strip(), str(item["robot"]).strip()))
+    return result
+
+
 def _parse_agent_args() -> List[Tuple[str, str]]:
-    parser = argparse.ArgumentParser(description="Run multi-NAO chat. Pass agent/robot pairs or use nao_config.AGENTS.")
+    root = Path(__file__).resolve().parent
+    default_agents_path = root / AGENTS_FILE
+    parser = argparse.ArgumentParser(
+        description="Run multi-NAO chat. Agents from %s by default, or pass --agent NAME ROBOT." % default_agents_path
+    )
     parser.add_argument(
         "--agent",
         nargs=2,
         action="append",
         metavar=("NAME", "ROBOT"),
-        help="Agent name and robot name (repeatable). e.g. --agent Beep ANGEL --agent Moop JOURNEY",
+        help="Agent name and robot name (repeatable). Overrides agents file when provided.",
+    )
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=default_agents_path,
+        help="Path to agents JSON file (default: %s)" % AGENTS_FILE,
     )
     args = parser.parse_args()
     if args.agent:
         return [tuple(pair) for pair in args.agent]
-    return []
+    agents_list = _load_agents_from_file(args.config)
+    return agents_list
 
 
 async def multi_nao_chat(agents_list: List[Tuple[str, str]]):
