@@ -33,17 +33,24 @@ ZMQ_PORT = 9559
 timestep_buffer = defaultdict(list)
 
 parser = argparse.ArgumentParser()
+parser.add_argument("--connection", choices=["text", "speech"], default="speech",
+                    help="text: dummy IP, receive/print commands only; speech: connect to physical NAO")
 parser.add_argument("--mode", choices=["print", "execute"], default="execute")
 parser.add_argument("--port", type=int, default="5555")
 parser.add_argument("--robot", type=str, default="ANGEL")
 args = parser.parse_args()
+connection = args.connection
 mode = args.mode
 PORT = args.port
 ROBOT_NAME = args.robot
-try:
-    ROBOT_IP = ROBOT_IPS[ROBOT_NAME]
-except KeyError:
-    raise ValueError("Unknown robot name: "+ROBOT_NAME)
+
+if connection == "text":
+    ROBOT_IP = "127.0.0.1"
+else:
+    try:
+        ROBOT_IP = ROBOT_IPS[ROBOT_NAME]
+    except KeyError:
+        raise ValueError("Unknown robot name: " + ROBOT_NAME)
 
 # ----- Input folder for this name: create if first time (personality, see.jpg, sound.wav) -----
 def _safe_folder_name(name):
@@ -89,7 +96,8 @@ def _ensure_input_folder(root, name):
     return folder
 
 INPUT_FOLDER = _ensure_input_folder(PROJECT_ROOT, ROBOT_NAME)
-print(ROBOT_IP)
+print("Connection: %s" % connection)
+print("ROBOT_IP: %s" % ROBOT_IP)
 print("Input folder: " + INPUT_FOLDER)
 
 context = zmq.Context()
@@ -97,15 +105,17 @@ socket = context.socket(zmq.REP)
 socket.bind("tcp://*:"+str(PORT))
 
 running = True
+vision_started = False
 
-def shutdown(signal, frame):
+def shutdown(sig, frame):
     global running
     print("Shutting down...")
     running = False
-    try:
-        vision_service.unsubscribe(vision_client)
-    except Exception:
-        pass
+    if vision_started:
+        try:
+            vision_service.unsubscribe(vision_client)
+        except Exception:
+            pass
     socket.close()
     context.term()
     sys.exit(0)
@@ -201,10 +211,11 @@ def socket_send():
         tool = str(msg["tool"])
         args = msg["args"]
 
-        # Directly call the action
-        if mode == "execute":
+        if connection == "text":
+            print("[TEXT] tool=%s args=%s" % (tool, args))
+            socket.send_string("Message received by NAO")
+        elif mode == "execute":
             try:
-                # Convert unicode to str in Python 2
                 for k, v in args.items():
                     if isinstance(v, unicode):
                         args[k] = v.encode("utf-8")
@@ -214,27 +225,24 @@ def socket_send():
             except Exception as e:
                 socket.send_string("Error executing: "+str(e))
         else:
-            tool = str(msg["tool"])
-            args = msg["args"]
             timestep = msg.get("timestep", 0)
-
             timestep_buffer[timestep].append({"tool": tool, "args": args})
             socket.send_string("Message received by NAO")
 
 
-if mode == "execute":
-    vision_service = ALProxy("ALVideoDevice", ROBOT_IP, ZMQ_PORT)
-    vision_client = vision_service.subscribe("python_camera_" + ROBOT_NAME, 2, 11, 30)
-
-    camera_thread = threading.Thread(target=capture_image)
-    camera_thread.daemon = True
-    camera_thread.start()
+if connection == "speech":
+    actions.init(ROBOT_IP, ZMQ_PORT)
+    if mode == "execute":
+        vision_service = ALProxy("ALVideoDevice", ROBOT_IP, ZMQ_PORT)
+        vision_client = vision_service.subscribe("python_camera_" + ROBOT_NAME, 2, 11, 30)
+        camera_thread = threading.Thread(target=capture_image)
+        camera_thread.daemon = True
+        camera_thread.start()
+        vision_started = True
 
 socket_thread = threading.Thread(target=socket_send)
 socket_thread.daemon = True
 socket_thread.start()
-actions.init(ROBOT_IP, ZMQ_PORT)
-# actions.track_face()
 
 # Keep main thread alive so Ctrl-C works
 while running:
