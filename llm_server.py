@@ -84,7 +84,7 @@ kwargs = {k: v for k, v in locals().items() if v is not None}
 await send_fn(tool_name, kwargs)
 return str(kwargs)
 """
-    exec_globals = {"send_fn": send_fn, "tool_name": tool_name}
+    exec_globals = {"send_fn": send_fn, "tool_name": tool_name, "Optional": Optional}
     exec(
         f"async def _fn({params_str}):\n" + "\n".join(" " + line for line in body.strip().split("\n")),
         exec_globals,
