@@ -18,16 +18,16 @@ import time
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, PROJECT_ROOT)
 from helpers import actions
+try:
+    from helpers import nao_config
+    ROBOT_IPS = nao_config.ROBOT_IPS
+    _BASE_PORT = nao_config.NAO_BASE_PORT
+    _PORT_MAX_OFFSET = getattr(nao_config, "NAO_PORT_MAX_OFFSET", 9)
+except ImportError:
+    print("Error importing nao_config")
+    sys.exit(1) 
 face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
 eye_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_eye.xml')
-
-ROBOT_IPS={
-    "FRIENDLY": "192.168.1.128",
-    "ANGEL": "192.168.1.35",
-    "JOURNEY": "192.168.1.55",
-    "SOOMIN": "192.168.1.",
-    "SAM": "192.168.1.128"
-}
 ZMQ_PORT = 9559
 
 timestep_buffer = defaultdict(list)
@@ -36,21 +36,26 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--connection", choices=["text", "speech"], default="speech",
                     help="text: dummy IP, receive/print commands only; speech: connect to physical NAO")
 parser.add_argument("--mode", choices=["print", "execute"], default="execute")
-parser.add_argument("--port", type=int, default="5555")
+parser.add_argument("--port", type=int, default=None, help="ZMQ port (default: try from %s)" % _BASE_PORT)
 parser.add_argument("--robot", type=str, default="ANGEL")
 args = parser.parse_args()
 connection = args.connection
 mode = args.mode
-PORT = args.port
 ROBOT_NAME = args.robot
 
+# assume text connection (no physical robot)
 if connection == "text":
     ROBOT_IP = "127.0.0.1"
+    _use_text_behavior = True
 else:
-    try:
+    if ROBOT_NAME in ROBOT_IPS:
         ROBOT_IP = ROBOT_IPS[ROBOT_NAME]
-    except KeyError:
-        raise ValueError("Unknown robot name: " + ROBOT_NAME)
+        _use_text_behavior = False
+    else:
+        ROBOT_IP = "127.0.0.1"
+        _use_text_behavior = True
+        connection = "text"
+        print("[nao_client] Robot '%s' not in ROBOT_IPS; assuming text connection." % ROBOT_NAME)
 
 # ----- Input folder for this name: create if first time (personality, see.jpg, sound.wav) -----
 def _safe_folder_name(name):
@@ -104,7 +109,17 @@ print("Input folder: " + INPUT_FOLDER)
 
 context = zmq.Context()
 socket = context.socket(zmq.REP)
-socket.bind("tcp://*:"+str(PORT))
+start_port = args.port if args.port is not None else _BASE_PORT
+PORT = start_port
+for offset in range(0, _PORT_MAX_OFFSET + 1):
+    try:
+        PORT = start_port + offset
+        socket.bind("tcp://*:" + str(PORT))
+        break
+    except zmq.ZMQError:
+        if offset >= _PORT_MAX_OFFSET:
+            raise
+print("Bound to port: %s" % PORT)
 
 running = True
 vision_started = False

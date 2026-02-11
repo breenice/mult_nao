@@ -2,6 +2,7 @@ import json
 import base64
 import asyncio
 from pathlib import Path
+from typing import Optional, Any
 
 import zmq
 
@@ -14,8 +15,15 @@ from helpers.input_names import ensure_input_folder
 from autogen_agentchat.agents import AssistantAgent, UserProxyAgent
 
 from helpers.robot_agent_virtual import RobotAgent
+from helpers.nao_config import ROBOT_IPS, NAO_BASE_PORT
 from autogen_ext.models.openai import OpenAIChatCompletionClient
 
+# Ordered list of (agent_name, robot_name). Port = NAO_BASE_PORT + index.
+AGENTS = [
+    ("NAO_Alpha", "ANGEL"),
+    ("NAO_Beta", "JOURNEY"),
+    ("NAO_Gamma", "Gizmo"),
+]
 
 _TOOLS_JSON_PATH = Path(__file__).resolve().parent / "helpers" / "tools.json"
 with open(_TOOLS_JSON_PATH, "r") as f:
@@ -39,48 +47,90 @@ def _filter_args_by_schema(tool_name: str, args: dict) -> dict:
     return {k: v for k, v in args.items() if k in allowed}
 
 
-# NAO socket (send action commands to nao_client)
+def _json_type_to_annotation(prop: dict):
+    t = prop.get("type", "string")
+    if t == "string":
+        return str
+    if t == "integer":
+        return int
+    if t == "number":
+        return float
+    if t == "boolean":
+        return bool
+    return str
+
+
+def _make_nao_tool_with_signature(agent_name: str, tool_name: str, params_schema: dict, send_fn):
+    """Build an async tool with explicit params and type annotations. send_fn(tool_name, kwargs) is the async send."""
+    props = params_schema.get("properties") or {}
+    required = set(params_schema.get("required") or [])
+    if not props:
+        async def _no_arg_tool() -> str:
+            await send_fn(tool_name, {})
+            return "ok"
+        _no_arg_tool.__name__ = tool_name
+        return _no_arg_tool
+
+    annotations = {}
+    for pname, pdef in props.items():
+        annotations[pname] = _json_type_to_annotation(pdef if isinstance(pdef, dict) else {})
+
+    param_parts = []
+    for pname in sorted(props.keys()):
+        ann = annotations[pname]
+        ann_name = ann.__name__ if hasattr(ann, "__name__") else str(ann)
+        if pname in required:
+            param_parts.append(f"{pname}: {ann_name}")
+        else:
+            param_parts.append(f"{pname}: Optional[{ann_name}] = None")
+
+    params_str = ", ".join(param_parts)
+    body = """
+kwargs = {k: v for k, v in locals().items() if v is not None}
+await send_fn(tool_name, kwargs)
+return str(kwargs)
+"""
+    exec_globals = {"send_fn": send_fn, "tool_name": tool_name}
+    exec(
+        f"async def _fn({params_str}):\n" + "\n".join(" " + line for line in body.strip().split("\n")),
+        exec_globals,
+        local := {},
+    )
+    fn = local["_fn"]
+    fn.__name__ = tool_name
+    fn.__annotations__ = {p: annotations[p] for p in props.keys()}
+    return fn
+
+
+# NAO socket (per-agent; send action commands to nao_client)
 NAO_SOCKET_HOST = "localhost"
-NAO_SOCKET_PORT = 5555
-_nao_socket = None
 _nao_context = None
 
 
-def _init_nao_socket():
-    global _nao_socket, _nao_context
-    if _nao_socket is not None:
-        return
-    try:
+def _create_nao_socket(port: int):
+    """Create and connect a ZMQ REQ socket to host:port. Returns socket or None on failure."""
+    global _nao_context
+    if _nao_context is None:
         _nao_context = zmq.Context()
-        _nao_socket = _nao_context.socket(zmq.REQ)
-        _nao_socket.setsockopt(zmq.LINGER, 0)
-        _nao_socket.setsockopt(zmq.RCVTIMEO, 5000)
-        _nao_socket.connect("tcp://%s:%s" % (NAO_SOCKET_HOST, NAO_SOCKET_PORT))
+    try:
+        sock = _nao_context.socket(zmq.REQ)
+        sock.setsockopt(zmq.LINGER, 0)
+        sock.setsockopt(zmq.RCVTIMEO, 5000)
+        sock.connect("tcp://%s:%s" % (NAO_SOCKET_HOST, port))
+        return sock
     except Exception as e:
-        print("[LLM] NAO socket not available (%s). Actions will be printed only." % e)
-        _nao_socket = None
+        print("[LLM] NAO socket not available for port %s (%s). Actions will be printed only." % (port, e))
+        return None
 
 
-def _send_nao_command_sync(tool: str, args: dict) -> str:
-    # blocks until send to nao_client. Returns reply string. Args filtered by tools.json schema.
-    if _nao_socket is None:
+def _send_nao_command_sync(tool: str, args: dict, socket) -> str:
+    """Blocking send to nao_client. Args filtered by tools.json schema. Returns reply or '' if socket is None."""
+    if socket is None:
         return ""
     args = _filter_args_by_schema(tool, args)
     cmd = {"tool": tool, "args": args}
-    _nao_socket.send_string(json.dumps(cmd))
-    return _nao_socket.recv_string()
-
-
-async def send_nao_command(agent_name: str, tool: str, args: dict):
-    # sends action to nao_client and prints what was sent.
-    print("[ACTION] %s -> %s %s" % (agent_name, tool, args))
-    loop = asyncio.get_event_loop()
-    try:
-        reply = await loop.run_in_executor(None, lambda: _send_nao_command_sync(tool, args))
-        if reply:
-            print("[NAO] %s" % reply)
-    except Exception as e:
-        print("[NAO] Error: %s" % e)
+    socket.send_string(json.dumps(cmd))
+    return socket.recv_string()
 
 
 # ====== Model Client ======
@@ -104,12 +154,13 @@ async def reason_with_vision(agent_name: str, memory_agent: MemoryAgent, prompt:
 
 
 # ====== NAO Agent Factory ======
-def create_nao_agent(name: str, root: Path):
-    #  makes NAO agent and uses input/<name>/ for personality, memory, image, sound. Tools from tools.json
+def create_nao_agent(name: str, root: Path, robot_name: str, port: int, socket):
+    """Create a NAO agent with a physical robot (robot_name) and its own socket (port)."""
     folder = ensure_input_folder(root, name)
     personality_path = str(folder / "personality.json")
     memory_path = str(folder / "memory")
     see_path = folder / "see.jpg"
+    is_text = robot_name not in ROBOT_IPS
 
     client = OpenAI()
 
@@ -122,12 +173,15 @@ def create_nao_agent(name: str, root: Path):
 
     personality_text = robot.personality.to_prompt_text()
 
-    def _make_nao_tool(tool_name: str):
-        async def fn(**kwargs):
-            await send_nao_command(name, tool_name, kwargs)
-            return str(kwargs)
-        fn.__name__ = tool_name
-        return fn
+    async def send_for_this_agent(tool: str, args: dict):
+        print("[ACTION] %s (%s) -> %s %s" % (name, robot_name + (" text" if is_text else ""), tool, args))
+        loop = asyncio.get_event_loop()
+        try:
+            reply = await loop.run_in_executor(None, lambda: _send_nao_command_sync(tool, args, socket))
+            if reply:
+                print("[NAO] %s" % reply)
+        except Exception as e:
+            print("[NAO] Error: %s" % e)
 
     agent_tools = []
     tool_names = []
@@ -137,12 +191,13 @@ def create_nao_agent(name: str, root: Path):
             continue
         tool_names.append(fn_name)
         if fn_name == "reason_with_vision":
-            async def vision_tool(prompt: str, **_):
+            async def vision_tool(prompt: str) -> str:
                 return await reason_with_vision(name, robot.memory, prompt, see_path)
             vision_tool.__name__ = "reason_with_vision"
             agent_tools.append(vision_tool)
         else:
-            agent_tools.append(_make_nao_tool(fn_name))
+            params_schema = t.get("function", {}).get("parameters") or {}
+            agent_tools.append(_make_nao_tool_with_signature(name, fn_name, params_schema, send_for_this_agent))
 
     tool_list_str = ", ".join(tool_names)
 
@@ -151,7 +206,7 @@ def create_nao_agent(name: str, root: Path):
         model_client=model_client,
         tools=agent_tools,
         system_message=f"""
-            You are {name}, a NAO robot with a unique personality.
+            You are {name}, a NAO robot (robot: {robot_name}) with a unique personality.
             Personality:
             {personality_text}
 
@@ -171,15 +226,16 @@ def extract_text(result):
 
 # ====== Multi-Agent Conversation ======
 async def multi_nao_chat():
-    _init_nao_socket()
     root = Path(__file__).resolve().parent
-    nao1 = create_nao_agent("NAO_Alpha", root)
-    nao2 = create_nao_agent("NAO_Beta", root)
-    nao3 = create_nao_agent("NAO_Gamma", root)
+    nao_agents = []
+    for i, (agent_name, robot_name) in enumerate(AGENTS):
+        port = NAO_BASE_PORT + i
+        sock = _create_nao_socket(port)
+        nao_agents.append(create_nao_agent(agent_name, root, robot_name, port, sock))
 
     human = UserProxyAgent(name="Human", input_func=input)
 
-    agents = [human, nao1, nao2, nao3]
+    agents = [human] + nao_agents
 
     current_message = "Hello team!"
 
@@ -193,7 +249,7 @@ async def multi_nao_chat():
         print(f"[Human]: {current_message}")
 
         # NAO turns
-        for nao in [nao1, nao2, nao3]:
+        for nao in nao_agents:
             print(f"\n{nao.name} responding to: {current_message}")
             result = await nao.run(task=current_message)
             text = extract_text(result)
