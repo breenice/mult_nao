@@ -38,24 +38,7 @@ parser.add_argument("--connection", choices=["text", "speech"], default="speech"
 parser.add_argument("--mode", choices=["print", "execute"], default="execute")
 parser.add_argument("--port", type=int, default=None, help="ZMQ port (default: try from %s)" % _BASE_PORT)
 parser.add_argument("--robot", type=str, default="ANGEL")
-args = parser.parse_args()
-connection = args.connection
-mode = args.mode
-ROBOT_NAME = args.robot
-
-# assume text connection (no physical robot)
-if connection == "text":
-    ROBOT_IP = "127.0.0.1"
-    _use_text_behavior = True
-else:
-    if ROBOT_NAME in ROBOT_IPS:
-        ROBOT_IP = ROBOT_IPS[ROBOT_NAME]
-        _use_text_behavior = False
-    else:
-        ROBOT_IP = "127.0.0.1"
-        _use_text_behavior = True
-        connection = "text"
-        print("[nao_client] Robot '%s' not in ROBOT_IPS; assuming text connection." % ROBOT_NAME)
+parser.add_argument("--multi", action="store_true", help="run multi-port mode (one process, N ports, text-only)")
 
 # ----- Input folder for this name: create if first time (personality, see.jpg, sound.wav) -----
 def _safe_folder_name(name):
@@ -100,12 +83,95 @@ def _ensure_input_folder(root, name):
             f.write(b"\x00" * n_bytes)
     return folder
 
+
+def run_multi_port():
+    # 1 terminal, N ports (per robot)
+    # text-only mode: receive and print formatted as [robot:port]
+    agent_robots = getattr(nao_config, "NAO_AGENT_ROBOTS", ["ANGEL", "JOURNEY", "Gizmo"])
+    base_port = getattr(nao_config, "NAO_BASE_PORT", 5555)
+    port_max_offset = getattr(nao_config, "NAO_PORT_MAX_OFFSET", 9)
+    for robot_name in agent_robots:
+        _ensure_input_folder(PROJECT_ROOT, robot_name)
+    ctx = zmq.Context()
+    listeners = []
+    socket_to_info = {}
+    for i, robot_name in enumerate(agent_robots):
+        port = base_port + i
+        start_port = port
+        for offset in range(0, port_max_offset + 1):
+            try:
+                port = start_port + offset
+                sock = ctx.socket(zmq.REP)
+                sock.bind("tcp://*:" + str(port))
+                listeners.append((sock, robot_name, port))
+                socket_to_info[sock] = (robot_name, port)
+                break
+            except zmq.ZMQError:
+                if offset >= port_max_offset:
+                    raise
+    poller = zmq.Poller()
+    for (sock, _, _) in listeners:
+        poller.register(sock, zmq.POLLIN)
+    print("[nao_client] Multi-port mode: %s" % ", ".join("%s:%s" % (r, p) for (_, r, p) in listeners))
+    state = {"running": True}
+
+    def shutdown_multi(sig, frame):
+        state["running"] = False
+
+    signal.signal(signal.SIGINT, shutdown_multi)
+    try:
+        while state["running"]:
+            socks = dict(poller.poll(500))
+            for sock in socks:
+                if socks[sock] != zmq.POLLIN:
+                    continue
+                robot_name, port = socket_to_info[sock]
+                message = sock.recv_string().strip()
+                msg = json.loads(message)
+                tool = str(msg.get("tool", ""))
+                args = msg.get("args", {})
+                print("[%s:%s] [TEXT] tool=%s args=%s" % (robot_name, port, tool, args))
+                sock.send_string("Message received by NAO")
+    except KeyboardInterrupt:
+        running = False
+    for (sock, _, _) in listeners:
+        try:
+            sock.close()
+        except Exception:
+            pass
+    ctx.term()
+
+
+args = parser.parse_args()
+if args.multi:
+    run_multi_port()
+    sys.exit(0)
+
+# single-port mode ========
+connection = args.connection
+mode = args.mode
+ROBOT_NAME = args.robot
+
+# assume text connection (no physical robot)
+if connection == "text":
+    ROBOT_IP = "127.0.0.1"
+    _use_text_behavior = True
+else:
+    if ROBOT_NAME in ROBOT_IPS:
+        ROBOT_IP = ROBOT_IPS[ROBOT_NAME]
+        _use_text_behavior = False
+    else:
+        ROBOT_IP = "127.0.0.1"
+        _use_text_behavior = True
+        connection = "text"
+        print("[nao_client] Robot '%s' not in ROBOT_IPS; assuming text connection." % ROBOT_NAME)
+
 # Gizmo is the default robot name for text mode (no physical robot Gizmo exists)
 INPUT_FOLDER_NAME = "Gizmo" if connection == "text" else ROBOT_NAME
 INPUT_FOLDER = _ensure_input_folder(PROJECT_ROOT, INPUT_FOLDER_NAME)
-print("Connection: %s" % connection)
-print("ROBOT_IP: %s" % ROBOT_IP)
-print("Input folder: " + INPUT_FOLDER)
+print("[%s] Connection: %s" % (ROBOT_NAME, connection))
+print("[%s] ROBOT_IP: %s" % (ROBOT_NAME, ROBOT_IP))
+print("[%s] Input folder: %s" % (ROBOT_NAME, INPUT_FOLDER))
 
 context = zmq.Context()
 socket = context.socket(zmq.REP)
@@ -119,7 +185,7 @@ for offset in range(0, _PORT_MAX_OFFSET + 1):
     except zmq.ZMQError:
         if offset >= _PORT_MAX_OFFSET:
             raise
-print("Bound to port: %s" % PORT)
+print("[%s:%s] Bound to port: %s" % (ROBOT_NAME, PORT, str(PORT)))
 
 running = True
 vision_started = False
@@ -229,7 +295,7 @@ def socket_send():
         args = msg["args"]
 
         if connection == "text":
-            print("[TEXT] tool=%s args=%s" % (tool, args))
+            print("[%s:%s] [TEXT] tool=%s args=%s" % (ROBOT_NAME, PORT, tool, args))
             socket.send_string("Message received by NAO")
         elif mode == "execute":
             try:

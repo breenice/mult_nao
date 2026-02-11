@@ -1,8 +1,9 @@
+import argparse
 import json
 import base64
 import asyncio
 from pathlib import Path
-from typing import Optional, Any
+from typing import Optional, Any, List, Tuple
 
 import zmq
 
@@ -15,15 +16,8 @@ from helpers.input_names import ensure_input_folder
 from autogen_agentchat.agents import AssistantAgent, UserProxyAgent
 
 from helpers.robot_agent_virtual import RobotAgent
-from helpers.nao_config import ROBOT_IPS, NAO_BASE_PORT
+from helpers.nao_config import ROBOT_IPS, NAO_BASE_PORT, NAO_AGENT_ROBOTS, AGENTS
 from autogen_ext.models.openai import OpenAIChatCompletionClient
-
-# Ordered list of (agent_name, robot_name). Port = NAO_BASE_PORT + index.
-AGENTS = [
-    ("NAO_Alpha", "ANGEL"),
-    ("NAO_Beta", "JOURNEY"),
-    ("NAO_Gamma", "Gizmo"),
-]
 
 _TOOLS_JSON_PATH = Path(__file__).resolve().parent / "helpers" / "tools.json"
 with open(_TOOLS_JSON_PATH, "r") as f:
@@ -225,11 +219,28 @@ def extract_text(result):
 
 
 # ====== Multi-Agent Conversation ======
-async def multi_nao_chat():
+def _parse_agent_args() -> List[Tuple[str, str]]:
+    parser = argparse.ArgumentParser(description="Run multi-NAO chat. Pass agent/robot pairs or use nao_config.AGENTS.")
+    parser.add_argument(
+        "--agent",
+        nargs=2,
+        action="append",
+        metavar=("NAME", "ROBOT"),
+        help="Agent name and robot name (repeatable). e.g. --agent Beep ANGEL --agent Moop JOURNEY",
+    )
+    args = parser.parse_args()
+    if args.agent:
+        return [tuple(pair) for pair in args.agent]
+    return AGENTS
+
+
+async def multi_nao_chat(agents_list: List[Tuple[str, str]]):
     root = Path(__file__).resolve().parent
     nao_agents = []
-    for i, (agent_name, robot_name) in enumerate(AGENTS):
-        port = NAO_BASE_PORT + i
+    for agent_name, robot_name in agents_list:
+        if robot_name not in NAO_AGENT_ROBOTS:
+            raise ValueError("Robot %r not in NAO_AGENT_ROBOTS (nao_config); add it for a port." % robot_name)
+        port = NAO_BASE_PORT + NAO_AGENT_ROBOTS.index(robot_name)
         sock = _create_nao_socket(port)
         nao_agents.append(create_nao_agent(agent_name, root, robot_name, port, sock))
 
@@ -264,4 +275,5 @@ async def multi_nao_chat():
 
 # ====== Run ======
 if __name__ == "__main__":
-    asyncio.run(multi_nao_chat())
+    agents_list = _parse_agent_args()
+    asyncio.run(multi_nao_chat(agents_list))
