@@ -184,11 +184,9 @@ async def reason_with_vision(
         print("[VISION] Calling vision API (speak-only) for %s (%d bytes)" % (agent_name, len(data)))
         client = OpenAI()
         system = (
-            f"""You are {agent_name}, a NAO robot observing through a camera.
-            "Answer ONLY with the speak tool. Limit to 1 sentence.
-            ---- Memory ----
-            {memory}
-            """
+            f"You are {agent_name}, a NAO robot observing through a camera. "
+            "Answer ONLY with the speak tool. Limit to 1 sentence. Speak in first person (e.g. I see...).\n\n"
+            f"---- Memory ----\n{memory}\n"
         )
         response = client.chat.completions.create(
             model="gpt-4o-mini",
