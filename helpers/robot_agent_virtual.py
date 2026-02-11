@@ -12,11 +12,6 @@ from helpers.personality.personality_module import PersonalityEngine
 _HELPERS_DIR = Path(__file__).resolve().parent
 DEFAULT_BIG5_PATH = str(_HELPERS_DIR / "personality" / "big5.json")
 
-
-parser = argparse.ArgumentParser()
-parser.add_argument("--mode", choices=["speak", "text"], default="text")
-args = parser.parse_args()
-
 tools = [
     {
     "type": "function",
@@ -87,6 +82,10 @@ class RobotAgent:
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--mode", choices=["speak", "text"], default="text")
+    args = parser.parse_args()
+
     root = Path(__file__).resolve().parent.parent
     client = OpenAI()
     agent = RobotAgent(
