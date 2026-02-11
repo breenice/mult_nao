@@ -16,7 +16,7 @@ from helpers.input_names import ensure_input_folder
 from autogen_agentchat.agents import AssistantAgent, UserProxyAgent
 
 from helpers.robot_agent_virtual import RobotAgent
-from helpers.nao_config import ROBOT_IPS, NAO_BASE_PORT, NAO_AGENT_ROBOTS, AGENTS
+from helpers.nao_config import ROBOT_IPS, NAO_BASE_PORT
 from autogen_ext.models.openai import OpenAIChatCompletionClient
 
 _TOOLS_JSON_PATH = Path(__file__).resolve().parent / "helpers" / "tools.json"
@@ -231,16 +231,16 @@ def _parse_agent_args() -> List[Tuple[str, str]]:
     args = parser.parse_args()
     if args.agent:
         return [tuple(pair) for pair in args.agent]
-    return AGENTS
+    return []
 
 
 async def multi_nao_chat(agents_list: List[Tuple[str, str]]):
+    if not agents_list:
+        raise ValueError("give at least one --agent NAME ROBOT (e.g. --agent <display-name> <physical-robot-name> --agent Casper JOURNEY)")
     root = Path(__file__).resolve().parent
     nao_agents = []
-    for agent_name, robot_name in agents_list:
-        if robot_name not in NAO_AGENT_ROBOTS:
-            raise ValueError("Robot %r not in NAO_AGENT_ROBOTS (nao_config); add it for a port." % robot_name)
-        port = NAO_BASE_PORT + NAO_AGENT_ROBOTS.index(robot_name)
+    for i, (agent_name, robot_name) in enumerate(agents_list):
+        port = NAO_BASE_PORT + i
         sock = _create_nao_socket(port)
         nao_agents.append(create_nao_agent(agent_name, root, robot_name, port, sock))
 

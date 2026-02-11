@@ -39,6 +39,8 @@ parser.add_argument("--mode", choices=["print", "execute"], default="execute")
 parser.add_argument("--port", type=int, default=None, help="ZMQ port (default: try from %s)" % _BASE_PORT)
 parser.add_argument("--robot", type=str, default="ANGEL")
 parser.add_argument("--multi", action="store_true", help="run multi-port mode (one process, N ports, text-only)")
+parser.add_argument("--agent", nargs=2, action="append", metavar=("NAME", "ROBOT"),
+                    help="For --multi: agent name and robot name, repeatable. Ports assigned in order (e.g. --agent Dearanna ANGEL --agent Casper JOURNEY)")
 
 # ----- Input folder for this name: create if first time (personality, see.jpg, sound.wav) -----
 def _safe_folder_name(name):
@@ -84,18 +86,20 @@ def _ensure_input_folder(root, name):
     return folder
 
 
-def run_multi_port():
-    # 1 terminal, N ports (per robot)
+def run_multi_port(args):
+    # 1 terminal, N ports (one per agent); ports assigned in order from NAO_BASE_PORT.
     # text-only mode: receive and print formatted as [robot:port]
-    agent_robots = getattr(nao_config, "NAO_AGENT_ROBOTS", ["ANGEL", "JOURNEY", "Gizmo"])
+    agent_list = [tuple(pair) for pair in args.agent] if getattr(args, "agent", None) else []
+    if not agent_list:
+        raise SystemExit("Multi-port mode requires at least one --agent NAME ROBOT (e.g. --multi --agent Dearanna ANGEL --agent Casper JOURNEY)")
     base_port = getattr(nao_config, "NAO_BASE_PORT", 5555)
     port_max_offset = getattr(nao_config, "NAO_PORT_MAX_OFFSET", 9)
-    for robot_name in agent_robots:
-        _ensure_input_folder(PROJECT_ROOT, robot_name)
+    for agent_name, robot_name in agent_list:
+        _ensure_input_folder(PROJECT_ROOT, agent_name)
     ctx = zmq.Context()
     listeners = []
     socket_to_info = {}
-    for i, robot_name in enumerate(agent_robots):
+    for i, (agent_name, robot_name) in enumerate(agent_list):
         port = base_port + i
         start_port = port
         for offset in range(0, port_max_offset + 1):
@@ -112,7 +116,7 @@ def run_multi_port():
     poller = zmq.Poller()
     for (sock, _, _) in listeners:
         poller.register(sock, zmq.POLLIN)
-    print("[nao_client] Multi-port mode: %s" % ", ".join("%s:%s" % (r, p) for (_, r, p) in listeners))
+    print("[nao_client] Multi-port mode: %s" % ", ".join("%s:%s" % (robot_name, p) for (_, robot_name, p) in listeners))
     state = {"running": True}
 
     def shutdown_multi(sig, frame):
@@ -144,7 +148,7 @@ def run_multi_port():
 
 args = parser.parse_args()
 if args.multi:
-    run_multi_port()
+    run_multi_port(args)
     sys.exit(0)
 
 # single-port mode ========
