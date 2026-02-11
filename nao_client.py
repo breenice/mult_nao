@@ -95,7 +95,9 @@ def _ensure_input_folder(root, name):
             f.write(b"\x00" * n_bytes)
     return folder
 
-INPUT_FOLDER = _ensure_input_folder(PROJECT_ROOT, ROBOT_NAME)
+# Gizmo is the default robot name for text mode (no physical robot Gizmo exists)
+INPUT_FOLDER_NAME = "Gizmo" if connection == "text" else ROBOT_NAME
+INPUT_FOLDER = _ensure_input_folder(PROJECT_ROOT, INPUT_FOLDER_NAME)
 print("Connection: %s" % connection)
 print("ROBOT_IP: %s" % ROBOT_IP)
 print("Input folder: " + INPUT_FOLDER)

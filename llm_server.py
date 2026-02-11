@@ -3,17 +3,84 @@ import base64
 import asyncio
 from pathlib import Path
 
+import zmq
+
 from openai import OpenAI
 from tinydb import TinyDB
 
 from helpers.personality.personality_module import PersonalityEngine
 from helpers.memory.memory_agent import MemoryAgent
 from helpers.input_names import ensure_input_folder
-from autogen_agentchat.agents import AssistantAgent, UserProxyAgent 
+from autogen_agentchat.agents import AssistantAgent, UserProxyAgent
 
-from helpers.robot_agent_virtual import RobotAgent 
+from helpers.robot_agent_virtual import RobotAgent
 from autogen_ext.models.openai import OpenAIChatCompletionClient
 
+
+_TOOLS_JSON_PATH = Path(__file__).resolve().parent / "helpers" / "tools.json"
+with open(_TOOLS_JSON_PATH, "r") as f:
+    NAO_TOOLS = json.load(f)
+
+
+def _get_tool_schema(tool_name: str) -> dict:
+    # return the function schema for a tool name from tools.json, or None
+    for t in NAO_TOOLS:
+        if t.get("function", {}).get("name") == tool_name:
+            return t["function"].get("parameters", {})
+    return None
+
+
+def _filter_args_by_schema(tool_name: str, args: dict) -> dict:
+    # keep only args that appear in the tool's parameters in json file
+    schema = _get_tool_schema(tool_name)
+    if not schema or "properties" not in schema:
+        return args
+    allowed = set(schema["properties"].keys())
+    return {k: v for k, v in args.items() if k in allowed}
+
+
+# NAO socket (send action commands to nao_client)
+NAO_SOCKET_HOST = "localhost"
+NAO_SOCKET_PORT = 5555
+_nao_socket = None
+_nao_context = None
+
+
+def _init_nao_socket():
+    global _nao_socket, _nao_context
+    if _nao_socket is not None:
+        return
+    try:
+        _nao_context = zmq.Context()
+        _nao_socket = _nao_context.socket(zmq.REQ)
+        _nao_socket.setsockopt(zmq.LINGER, 0)
+        _nao_socket.setsockopt(zmq.RCVTIMEO, 5000)
+        _nao_socket.connect("tcp://%s:%s" % (NAO_SOCKET_HOST, NAO_SOCKET_PORT))
+    except Exception as e:
+        print("[LLM] NAO socket not available (%s). Actions will be printed only." % e)
+        _nao_socket = None
+
+
+def _send_nao_command_sync(tool: str, args: dict) -> str:
+    # blocks until send to nao_client. Returns reply string. Args filtered by tools.json schema.
+    if _nao_socket is None:
+        return ""
+    args = _filter_args_by_schema(tool, args)
+    cmd = {"tool": tool, "args": args}
+    _nao_socket.send_string(json.dumps(cmd))
+    return _nao_socket.recv_string()
+
+
+async def send_nao_command(agent_name: str, tool: str, args: dict):
+    # sends action to nao_client and prints what was sent.
+    print("[ACTION] %s -> %s %s" % (agent_name, tool, args))
+    loop = asyncio.get_event_loop()
+    try:
+        reply = await loop.run_in_executor(None, lambda: _send_nao_command_sync(tool, args))
+        if reply:
+            print("[NAO] %s" % reply)
+    except Exception as e:
+        print("[NAO] Error: %s" % e)
 
 
 # ====== Model Client ======
@@ -21,14 +88,6 @@ model_client = OpenAIChatCompletionClient(
     model="gpt-4o-mini",
 )
 
-# ====== Define NAO Tools ======
-async def speak(agent_name: str, text: str):
-    print(f"[{agent_name} SPEAKS]: {text}")
-    return text
-
-async def move_head(agent_name: str, direction: str):
-    print(f"[{agent_name} MOVES HEAD]: {direction}")
-    return direction
 
 async def reason_with_vision(agent_name: str, memory_agent: MemoryAgent, prompt: str, see_path: Path):
     memory = memory_agent.run_once(prompt)
@@ -46,7 +105,7 @@ async def reason_with_vision(agent_name: str, memory_agent: MemoryAgent, prompt:
 
 # ====== NAO Agent Factory ======
 def create_nao_agent(name: str, root: Path):
-    """Create a NAO agent. Uses input/<name>/ for personality, memory, image, sound."""
+    #  makes NAO agent and uses input/<name>/ for personality, memory, image, sound. Tools from tools.json
     folder = ensure_input_folder(root, name)
     personality_path = str(folder / "personality.json")
     memory_path = str(folder / "memory")
@@ -63,25 +122,40 @@ def create_nao_agent(name: str, root: Path):
 
     personality_text = robot.personality.to_prompt_text()
 
-    async def speak_tool(text: str):
-        return await speak(name, text)
+    def _make_nao_tool(tool_name: str):
+        async def fn(**kwargs):
+            await send_nao_command(name, tool_name, kwargs)
+            return str(kwargs)
+        fn.__name__ = tool_name
+        return fn
 
-    async def move_head_tool(direction: str):
-        return await move_head(name, direction)
+    agent_tools = []
+    tool_names = []
+    for t in NAO_TOOLS:
+        fn_name = t.get("function", {}).get("name")
+        if not fn_name:
+            continue
+        tool_names.append(fn_name)
+        if fn_name == "reason_with_vision":
+            async def vision_tool(prompt: str, **_):
+                return await reason_with_vision(name, robot.memory, prompt, see_path)
+            vision_tool.__name__ = "reason_with_vision"
+            agent_tools.append(vision_tool)
+        else:
+            agent_tools.append(_make_nao_tool(fn_name))
 
-    async def vision_tool(prompt: str):
-        return await reason_with_vision(name, robot.memory, prompt, see_path)
+    tool_list_str = ", ".join(tool_names)
 
     return AssistantAgent(
         name=name,
         model_client=model_client,
-        tools=[speak_tool, move_head_tool, vision_tool],
+        tools=agent_tools,
         system_message=f"""
             You are {name}, a NAO robot with a unique personality.
             Personality:
             {personality_text}
 
-            Use your tools to interact with the world: speak, move_head, reason_with_vision.
+            Use your tools to interact with the world. Available tools (from tools.json): {tool_list_str}.
             Always respond with tool calls only.
         """,
         reflect_on_tool_use=True,
@@ -97,6 +171,7 @@ def extract_text(result):
 
 # ====== Multi-Agent Conversation ======
 async def multi_nao_chat():
+    _init_nao_socket()
     root = Path(__file__).resolve().parent
     nao1 = create_nao_agent("NAO_Alpha", root)
     nao2 = create_nao_agent("NAO_Beta", root)
