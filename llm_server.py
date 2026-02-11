@@ -69,8 +69,9 @@ def _make_nao_tool_with_signature(agent_name: str, tool_name: str, params_schema
     for pname, pdef in props.items():
         annotations[pname] = _json_type_to_annotation(pdef if isinstance(pdef, dict) else {})
 
+    param_order = sorted(props.keys(), key=lambda p: (p not in required, p))
     param_parts = []
-    for pname in sorted(props.keys()):
+    for pname in param_order:
         ann = annotations[pname]
         ann_name = ann.__name__ if hasattr(ann, "__name__") else str(ann)
         if pname in required:
