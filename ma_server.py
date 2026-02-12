@@ -418,8 +418,32 @@ def create_nao_agent(agent_config: dict, root: Path, agent_index: int, socket, s
                 round_id=round_id,
             )
 
-    agent_tools = []
-    tool_names = []
+    # ---- Memory tools (recall + save) ----
+    memory_agent = robot.memory
+
+    async def recall_memory(query: str) -> str:
+        # search long-term memory for information relevant to the query
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(None, memory_agent.run_once, query)
+        return result or "No relevant memories found."
+    recall_memory.__name__ = "recall_memory"
+
+    async def save_memory(memory: str, memory_type: str = "semantic") -> str:
+        # save a fact or observation to long-term memory. memory_type: 'semantic' for facts about people/things, 'episodic' for user preferences/interaction style, 'procedural' for procedures/instructions
+        print("[MEMORY] %s save (%s): %r" % (robot_name, memory_type, memory[:120]))
+        loop = asyncio.get_event_loop()
+        save_prompt = f"Save the following to {memory_type} memory: {memory}"
+        result = await loop.run_in_executor(None, memory_agent.run_once, save_prompt)
+        print("[MEMORY] %s saved." % robot_name)
+        return "Memory saved."
+    save_memory.__name__ = "save_memory"
+
+    agent_tools = [
+        FunctionTool(recall_memory, description="Search long-term memory for relevant information. Use before responding to recall what you know about the user and conversation history.", name="recall_memory"),
+        FunctionTool(save_memory, description="Save important information to long-term memory so you can remember it in future conversations. memory_type: 'semantic' for facts, 'episodic' for preferences, 'procedural' for procedures.", name="save_memory"),
+    ]
+    tool_names = ["recall_memory", "save_memory"]
+
     for t in NAO_TOOLS:
         fn_def = t.get("function") or {}
         fn_name = fn_def.get("name")
@@ -429,7 +453,7 @@ def create_nao_agent(agent_config: dict, root: Path, agent_index: int, socket, s
         description = fn_def.get("description", fn_name) or fn_name
         if fn_name == "reason_with_vision":
             async def vision_tool(prompt: str) -> str:
-                return await reason_with_vision(robot_name, robot.memory, prompt, see_path, send_fn=send_for_this_agent)
+                return await reason_with_vision(robot_name, memory_agent, prompt, see_path, send_fn=send_for_this_agent)
             vision_tool.__name__ = "reason_with_vision"
             agent_tools.append(FunctionTool(vision_tool, description=description, name=fn_name))
         else:
@@ -445,17 +469,26 @@ def create_nao_agent(agent_config: dict, root: Path, agent_index: int, socket, s
         model_client=model_client,
         tools=agent_tools,
         system_message=(
-            f"Your name is {robot_name}. You must ALWAYS refer to yourself as {robot_name} — never use another robot's name when talking about yourself.\n"
-            f"You are a NAO robot in a multi-agent conversation with other robots and a human.\n\n"
-            f"Personality:\n{personality_text}\n\n"
-            f"IMPORTANT RULES:\n"
-            f"- You are {robot_name}. When asked your name, say \"{robot_name}\".\n"
-            f"- Do NOT repeat or copy what other robots have already said. Give your own unique response.\n"
-            f"- Do NOT speak on behalf of other robots (e.g. do not say \"I am ANGEL\" if you are SAM).\n"
-            f"- Stay in character with your personality traits.\n\n"
-            f"Use your tools to interact with the world. Available tools (from tools.json): {tool_list_str}.\n"
-            f"Always respond with tool calls only.\n\n"
-            f"When you use reason_with_vision: the result describes what the camera sees. You must then use that result to make follow-up tool calls in the same turn — e.g. call speak() to report what you saw to the user, or wave()/nod() if you see a person. Do not finish your turn with only the vision result; chain into at least one action (speak, wave, etc.) so the user gets a response or the robot acts on what it saw."
+            """Your name is {robot_name}. You must ALWAYS refer to yourself as {robot_name} — never use another robot's name when talking about yourself
+            You are a NAO robot in a multi-agent conversation with other robots and a human
+            Personality:
+            {personality_text}
+            MEMORY INSTRUCTIONS (IMPORTANT — follow every turn):
+            1. ALWAYS call recall_memory FIRST with a query about the current topic before you speak. This retrieves what you know about the user and past conversations.
+            2. Use the recalled memories to personalize your response (e.g. refer to the user by name, mention their interests).
+            3. After speaking, call save_memory to store any NEW facts the user shared (their name, interests, preferences, etc.).
+            - Use memory_type='semantic' for facts (name, age, hobbies, favorite things).
+            - Use memory_type='episodic' for preferences about how they like to interact.
+            - Use memory_type='procedural' for instructions or procedures they describe.
+            IDENTITY RULES:
+            - You are {robot_name}. When asked your name, say \"{robot_name}\".
+            - Do NOT repeat or copy what other robots have already said. Give your own unique response.
+            - Do NOT speak on behalf of other robots (e.g. do not say \"I am ANGEL\" if you are SAM).
+            - Stay in character with your personality traits.
+            Use your tools to interact with the world. Available tools: {tool_list_str}.
+            Always respond with tool calls only.
+            When you use reason_with_vision: the result describes what the camera sees. You must then use that result to make follow-up tool calls in the same turn — e.g. call speak() to report what you saw, or wave()/nod() if you see a person. Do not finish your turn with only the vision result; chain into at least one action."
+        """
         ),
         reflect_on_tool_use=True,
         model_client_stream=True
