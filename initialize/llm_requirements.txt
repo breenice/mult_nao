@@ -6,6 +6,9 @@ autogen-ext[openai]
 unidecode
 gTTS
 playsound
+# Listen mode (--listen): microphone input and Whisper transcription
+SpeechRecognition
+PyAudio
 # Used by llm_server via memory_agent / personality (if run in same env):
 python-dotenv
 langchain-core

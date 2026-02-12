@@ -1,0 +1,37 @@
+{
+  "agents": [
+    {
+      "name": "ANGEL",
+      "ip": "192.168.0.101",
+      "bigo_personality": {
+        "openness": 4,
+        "conscientiousness": 5,
+        "extraversion": 2,
+        "agreeableness": 5,
+        "neuroticism": 1
+      }
+    },
+    {
+      "name": "SAM",
+      "ip": "192.168.0.102",
+      "bigo_personality": {
+        "openness": 5,
+        "conscientiousness": 5,
+        "extraversion": 5,
+        "agreeableness": 5,
+        "neuroticism": 1
+      }
+    },
+    {
+        "name": "JOURNEY",
+        "ip": "192.168.0.102",
+        "bigo_personality": {
+          "openness": 5,
+          "conscientiousness": 5,
+          "extraversion": 5,
+          "agreeableness": 5,
+          "neuroticism": 1
+        }
+    }
+  ]
+}
