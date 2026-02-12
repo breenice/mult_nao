@@ -17,7 +17,7 @@ import time
 # Project root on path so modules package is found
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, PROJECT_ROOT)
-from modules import actions
+from modules.actions.actions import actions
 try:
     from config import nao_config
     ROBOT_IPS = nao_config.ROBOT_IPS
