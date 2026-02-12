@@ -308,6 +308,12 @@ def capture_image():
         final_file = os.path.join(SESSION_FOLDER, "see.jpg")
         cv2.imwrite(tmp_file, img)
         os.rename(tmp_file, final_file)
+        facing_file = os.path.join(SESSION_FOLDER, "facing.txt")
+        try:
+            with open(facing_file, "w") as f:
+                f.write("true" if human_looking else "false")
+        except IOError:
+            pass
 
         time.sleep(0.05)  # reduce CPU load
 

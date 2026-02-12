@@ -54,6 +54,26 @@ class PersonalityEngine:
         else:
             raise ValueError("Trait level must be 1–5")
 
+    def get_traits_raw(self) -> dict:
+        """Return raw trait values (o, c, e, a, n) as ints 1-5 for turn manager / anti-social check."""
+        traits = self.personality.get("self", {}).get("traits", {})
+        return {
+            "o": traits.get("o", 3),
+            "c": traits.get("c", 3),
+            "e": traits.get("e", 3),
+            "a": traits.get("a", 3),
+            "n": traits.get("n", 3),
+        }
+
+    def is_antisocial(
+        self,
+        extraversion_max: int = 2,
+        agreeableness_max: int = 2,
+    ) -> bool:
+        """True if robot is considered anti-social (low e and low a). Disqualified from speaking in group."""
+        raw = self.get_traits_raw()
+        return raw["e"] <= extraversion_max and raw["a"] <= agreeableness_max
+
     def get_big5_vals(self) -> dict:
         traits = self.personality["self"]["traits"]
 

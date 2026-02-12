@@ -26,11 +26,11 @@
         "name": "JOURNEY",
         "ip": "192.168.0.102",
         "bigo_personality": {
-          "openness": 5,
-          "conscientiousness": 5,
-          "extraversion": 5,
-          "agreeableness": 5,
-          "neuroticism": 1
+          "openness": 1,
+          "conscientiousness": 1,
+          "extraversion": 1,
+          "agreeableness": 1,
+          "neuroticism": 5
         }
     }
   ]

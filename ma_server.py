@@ -179,6 +179,156 @@ VLM_THRESHOLD = 0.5   # theta: agents with r_i >= this are in S_t
 VLM_TOP_K: Optional[int] = 2   # optional: max number of speakers per turn (None = no limit)
 VLM_SCORE_MODEL = "gpt-4o"   # vision-capable model for scoring
 
+# ====== Turn Manager (all robots speak unless disqualified) ======
+_TURN_MANAGER_CONFIG_PATH = Path(__file__).resolve().parent / "config" / "turn_manager.json"
+
+
+def _load_turn_manager_config() -> dict:
+    if not _TURN_MANAGER_CONFIG_PATH.exists() or _TURN_MANAGER_CONFIG_PATH.stat().st_size == 0:
+        return {
+            "anti_social_extraversion_max": 2,
+            "anti_social_agreeableness_max": 2,
+            "require_facing_when_directed": True,
+        }
+    try:
+        with open(_TURN_MANAGER_CONFIG_PATH, "r") as f:
+            data = json.load(f)
+        return {
+            "anti_social_extraversion_max": data.get("anti_social_extraversion_max", 2),
+            "anti_social_agreeableness_max": data.get("anti_social_agreeableness_max", 2),
+            "require_facing_when_directed": data.get("require_facing_when_directed", True),
+        }
+    except (json.JSONDecodeError, OSError):
+        return {
+            "anti_social_extraversion_max": 2,
+            "anti_social_agreeableness_max": 2,
+            "require_facing_when_directed": True,
+        }
+
+
+def _read_facing_per_robot(root: Path, nao_names: List[str]) -> Dict[str, bool]:
+    # read session/<robot>/facing.txt (true/false) per robot. Missing file => False
+    result: Dict[str, bool] = {}
+    for name in nao_names:
+        path = get_session_dir(root, name) / "facing.txt"
+        try:
+            if path.exists():
+                raw = path.read_text().strip().lower()
+                result[name] = raw in ("true", "1", "yes")
+            else:
+                result[name] = False
+        except OSError:
+            result[name] = False
+    return result
+
+
+def _is_antisocial_from_personality_file(
+    root: Path,
+    name: str,
+    extraversion_max: int,
+    agreeableness_max: int,
+) -> bool:
+    # true if robot's personality.json has e at least extraversion_max and a at least agreeableness_max
+    path = get_session_dir(root, name) / "personality.json"
+    try:
+        if not path.exists():
+            return False
+        with open(path, "r") as f:
+            data = json.load(f)
+        traits = data.get("self", {}).get("traits", {})
+        e = traits.get("e", 3)
+        a = traits.get("a", 3)
+        result = e <= extraversion_max and a <= agreeableness_max
+        # #region agent log
+        _log_path = Path(__file__).resolve().parent / ".cursor" / "debug.log"
+        import time as _t; _log_path.parent.mkdir(parents=True, exist_ok=True); open(_log_path, "a").write(json.dumps({"location": "ma_server.py:_is_antisocial", "message": "antisocial check", "data": {"name": name, "e": e, "a": a, "e_max": extraversion_max, "a_max": agreeableness_max, "result": result}, "timestamp": int(_t.time()*1000), "hypothesisId": "A"}) + "\n")
+        # #endregion
+        return result
+    except (json.JSONDecodeError, OSError, TypeError):
+        return False
+
+
+def _directed_at_robot_heuristic(message: str, nao_names: List[str]) -> Optional[str]:
+    # message starts with or contains 'NAME,' or 'NAME's opinion' 
+    if not message or not nao_names:
+        return None
+    msg_lower = message.strip().lower()
+    for name in nao_names:
+        n = name.strip()
+        if not n:
+            continue
+        n_lower = n.lower()
+        if msg_lower.startswith(n_lower + ",") or msg_lower.startswith(n_lower + "'s "):
+            return name
+        if " " + n_lower + "," in msg_lower or " " + n_lower + "'s " in msg_lower:
+            return name
+    return None
+
+
+async def _directed_at_robot_llm(message: str, nao_names: List[str]) -> Optional[str]:
+    # LLM call: which single robot is the message directed at, or None if general
+    if not message or not nao_names:
+        return None
+    try:
+        client = OpenAI()
+        names_str = ", ".join(nao_names)
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "Given the user message and the list of robot names, say which single robot the message is directed at. "
+                        "Reply with exactly one robot name from the list, or the word NONE if the message is general (e.g. hi, hello, what do you all think). "
+                        "Robot names: " + names_str + ". Reply with only the name or NONE."
+                    ),
+                },
+                {"role": "user", "content": message},
+            ],
+            max_tokens=50,
+        )
+        reply = (response.choices[0].message.content or "").strip().upper()
+        if reply == "NONE" or not reply:
+            return None
+        for name in nao_names:
+            if name.upper() == reply:
+                return name
+        return None
+    except Exception:
+        return None
+
+
+async def turn_manager_qualified(
+    last_message: str,
+    nao_names: List[str],
+    root: Path,
+    e_max: int,
+    a_max: int,
+    require_facing_when_directed: bool,
+    name_to_facing: Dict[str, bool],
+) -> List[str]:
+    # return ordered list of robot names qualified to speak this round
+    # - If message is directed at one robot: return [that_robot] (or [] if disqualified)
+    # - Otherwise: all non-anti-social robots in config order
+    directed = _directed_at_robot_heuristic(last_message, nao_names)
+    if directed is None:
+        directed = await _directed_at_robot_llm(last_message, nao_names)
+    if directed is not None:
+        if _is_antisocial_from_personality_file(root, directed, e_max, a_max):
+            return []
+        if require_facing_when_directed and not name_to_facing.get(directed, False):
+            return []
+        return [directed]
+    qualified = [
+        n for n in nao_names
+        if not _is_antisocial_from_personality_file(root, n, e_max, a_max)
+    ]
+    # #region agent log
+    _log_path = Path(__file__).resolve().parent / ".cursor" / "debug.log"
+    import time as _t; _log_path.parent.mkdir(parents=True, exist_ok=True); open(_log_path, "a").write(json.dumps({"location": "ma_server.py:turn_manager_qualified", "message": "final qualified list", "data": {"directed": directed, "nao_names": nao_names, "qualified": qualified}, "timestamp": int(_t.time()*1000), "hypothesisId": "B"}) + "\n")
+    # #endregion
+    return qualified
+
 
 def _see_jpg_is_valid(see_path: Path) -> bool:
     try:
@@ -522,15 +672,23 @@ def _build_context_from_thread(
     return "\n".join(lines) if lines else "(no conversation yet)"
 
 
+def _last_human_message(thread: Sequence[BaseAgentEvent | BaseChatMessage]) -> str:
+    # return the text of the most recent message from Human (or user), or empty string
+    for msg in reversed(thread):
+        src = _message_source_name(msg)
+        if src in (HUMAN_NAME, "user"):
+            return _message_text(msg)
+    return ""
+
+
 def _last_speaker_and_robot_count(
     thread: Sequence[BaseAgentEvent | BaseChatMessage],
     nao_names: List[str],
 ) -> Tuple[Optional[str], int]:
     # return (last_source, consecutive_robot_turn_count)
     # last_source: source of the most recent message with a source, or None if empty
-    # consecutive_robot_turn_count: number of distinct robot *turns* at the end of the thread
-    # (one agent can add multiple messages per turn e.g. tool calls + chat_message, so we count
-    # runs of same source, not raw message count)
+    # consecutive_robot_turn_count: number of consecutive *messages* from any robot at end of thread
+    # (so that with one robot, 2+ robot messages in a row still triggers hand-back to Human)
 
     if not thread:
         return None, 0
@@ -540,15 +698,12 @@ def _last_speaker_and_robot_count(
         if src is not None:
             last_source = src
             break
-    # Count consecutive robot *turns* (runs of same source) at the end
-    prev_src: Optional[str] = None
+    # Count consecutive robot messages at the end (any robot)
     turn_count = 0
     for msg in reversed(thread):
         src = _message_source_name(msg)
         if src is not None and src in nao_names:
-            if src != prev_src:
-                turn_count += 1
-                prev_src = src
+            turn_count += 1
         else:
             break
     return last_source, turn_count
@@ -637,6 +792,15 @@ async def multi_nao_chat(agents_list: List[dict], use_listen: bool = False):
 
     nao_names = [a.name for a in nao_agents]
     name_to_d_personality: Dict[str, str] = {a.name: (a.description or "") for a in nao_agents}
+    turn_manager_config = _load_turn_manager_config()
+    e_max = turn_manager_config["anti_social_extraversion_max"]
+    a_max = turn_manager_config["anti_social_agreeableness_max"]
+    require_facing = turn_manager_config["require_facing_when_directed"]
+
+    # State for "all qualified robots speak then human": current round's qualified list and index
+    # Use a mutable dict for the index so inner closures can modify it without 'nonlocal'
+    current_round_qualified: List[str] = []
+    round_state: Dict[str, int] = {"index": 0}
 
     def get_first_see_path() -> Optional[Path]:
         return _first_valid_see_path(root, nao_names)
@@ -647,35 +811,40 @@ async def multi_nao_chat(agents_list: List[dict], use_listen: bool = False):
     async def vlm_selector(thread: Sequence[BaseAgentEvent | BaseChatMessage]) -> Optional[str]:
         if not nao_names:
             return None
-        last_source, consecutive_robot_count = _last_speaker_and_robot_count(thread, nao_names)
-        # Hand back to Human after enough consecutive robot turns
-        if last_source is not None and last_source in nao_names and consecutive_robot_count >= MAX_CONSECUTIVE_ROBOT_TURNS:
-            return HUMAN_NAME
-        # When last speaker is human (or empty/initial), or we're still under the limit: pick a robot
-        if len(nao_names) == 1:
-            return nao_names[0]
-        X_t = _build_context_from_thread(thread)
-        image_path = get_first_see_path()
-        scores: List[Tuple[str, float]] = []
-        for name in nao_names:
-            d_pi = name_to_d_personality.get(name, "")
-            r_i = await _vlm_score_response(image_path, X_t, name, d_pi)
-            scores.append((name, r_i))
-        # S_t = { i | r_i >= theta }; sort by score descending for top-K
-        scores.sort(key=lambda x: -x[1])
-        selected = [name for name, r in scores if r >= VLM_THRESHOLD]
-        if not selected:
-            selected = [scores[0][0]] if scores else [nao_names[0]]
-        if VLM_TOP_K is not None and len(selected) > VLM_TOP_K:
-            selected = selected[:VLM_TOP_K]
-        # SelectorGroupChat expects a single speaker name (str), not a list; it validates "speaker not in participant_names" then returns [speaker].
-        return selected[0] if selected else nao_names[0]
+        last_source, _ = _last_speaker_and_robot_count(thread, nao_names)
+        if _is_human_source(last_source) or last_source is None:
+            last_msg = _last_human_message(thread) if thread else "Hello team!"
+            if not last_msg.strip():
+                last_msg = "Hello team!"
+            name_to_facing = _read_facing_per_robot(root, nao_names)
+            current_round_qualified.clear()
+            current_round_qualified.extend(
+                await turn_manager_qualified(
+                    last_msg, nao_names, root, e_max, a_max, require_facing, name_to_facing
+                )
+            )
+            round_state["index"] = 0
+            if not current_round_qualified:
+                return HUMAN_NAME
+            round_state["index"] = 1
+            print("[TURN MANAGER] Qualified: %s (from message: %r)" % (current_round_qualified, last_msg[:80]))
+            return current_round_qualified[0]
+        if round_state["index"] < len(current_round_qualified):
+            out = current_round_qualified[round_state["index"]]
+            round_state["index"] += 1
+            print("[TURN MANAGER] Next speaker: %s (index %d/%d)" % (out, round_state["index"], len(current_round_qualified)))
+            return out
+        return HUMAN_NAME
 
     def candidate_func(thread: Sequence[BaseAgentEvent | BaseChatMessage]) -> List[str]:
         last_source, _ = _last_speaker_and_robot_count(thread, nao_names)
         if _is_human_source(last_source) or last_source is None:
-            return list(nao_names)
-        return list(nao_names) + [HUMAN_NAME]
+            if not current_round_qualified:
+                return [HUMAN_NAME]
+            return [current_round_qualified[0]]
+        if round_state["index"] < len(current_round_qualified):
+            return [current_round_qualified[round_state["index"]]]
+        return [HUMAN_NAME]
 
     input_func = listen_for_human_input if use_listen else input
     human = UserProxyAgent(name="Human", input_func=input_func)

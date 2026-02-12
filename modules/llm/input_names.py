@@ -29,16 +29,29 @@ BIGO_TO_TRAITS = {
 
 
 def personality_from_bigo(bigo_personality: dict) -> dict:
-    # convert bigo_personality (0-1 scale) to personality.json 'self.traits' (1-5)
+    # convert bigo_personality to personality.json 'self.traits' (1-5)
+    # accepts either 0-1 scale (legacy) or 1-5 scale (current agent_config.json)
+    # scale detection: if ANY value > 1, assume the whole dict is 1-5 scale
     traits = {"o": 3, "c": 3, "e": 3, "a": 3, "n": 3}
     if not bigo_personality:
         return {**DEFAULT_PERSONALITY, "self": {"scale": {"min": 1, "max": 5}, "traits": traits}}
+    # Detect scale: if any trait value > 1, treat all as 1-5
+    is_1_5_scale = any(
+        float(bigo_personality.get(k, 0)) > 1
+        for k in BIGO_TO_TRAITS
+        if bigo_personality.get(k) is not None
+    )
     for key, trait_key in BIGO_TO_TRAITS.items():
         val = bigo_personality.get(key)
         if val is not None:
             try:
                 v = float(val)
-                traits[trait_key] = max(1, min(5, 1 + round(v * 4)))
+                if is_1_5_scale:
+                    # 1-5 scale: use directly (clamp to 1-5)
+                    traits[trait_key] = max(1, min(5, round(v)))
+                else:
+                    # 0-1 scale: convert to 1-5
+                    traits[trait_key] = max(1, min(5, 1 + round(v * 4)))
             except (TypeError, ValueError):
                 pass
     return {
@@ -105,14 +118,22 @@ def ensure_session_folder(
 ) -> Path:
     # create session/<robot_name>/ with personality.json, see.jpg, sound.wav
     # memory db will use session/<robot_name>/memory. Used for persistent per-robot data.
-    # if bigo_personality is provided (from agent_config), use it for default personality.json.
+    # if bigo_personality is provided (from agent_config), always regenerate so config changes take effect.
     
     folder = get_session_dir(root, robot_name)
     folder.mkdir(parents=True, exist_ok=True)
 
     personality_path = folder / "personality.json"
-    if not personality_path.exists():
-        personality = personality_from_bigo(bigo_personality) if bigo_personality else DEFAULT_PERSONALITY
+    if bigo_personality:
+        # Always regenerate from config so changes in agent_config.json take effect
+        personality = personality_from_bigo(bigo_personality)
+        with open(personality_path, "w") as f:
+            json.dump(personality, f, indent=2)
+        # #region agent log
+        import time as _t; _dbg = root / ".cursor" / "debug.log"; _dbg.parent.mkdir(parents=True, exist_ok=True); open(_dbg, "a").write(json.dumps({"location": "input_names.py:ensure_session_folder", "message": "wrote personality", "data": {"robot": robot_name, "bigo": bigo_personality, "traits": personality["self"]["traits"]}, "timestamp": int(_t.time()*1000), "hypothesisId": "C"}) + "\n")
+        # #endregion
+    elif not personality_path.exists():
+        personality = DEFAULT_PERSONALITY
         with open(personality_path, "w") as f:
             json.dump(personality, f, indent=2)
 
