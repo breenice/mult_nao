@@ -14,10 +14,11 @@ from naoqi import ALProxy
 import argparse
 import time
 
-# Project root on path so modules package is found
-PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, PROJECT_ROOT)
-from modules.actions.actions import actions
+# Project root on path so modules package is found (robust to cwd/symlinks)
+PROJECT_ROOT = os.path.dirname(os.path.realpath(os.path.abspath(__file__)))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+import modules.actions.actions as actions
 try:
     from config import nao_config
     ROBOT_IPS = nao_config.ROBOT_IPS
