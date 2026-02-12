@@ -129,9 +129,6 @@ def ensure_session_folder(
         personality = personality_from_bigo(bigo_personality)
         with open(personality_path, "w") as f:
             json.dump(personality, f, indent=2)
-        # #region agent log
-        import time as _t; _dbg = root / ".cursor" / "debug.log"; _dbg.parent.mkdir(parents=True, exist_ok=True); open(_dbg, "a").write(json.dumps({"location": "input_names.py:ensure_session_folder", "message": "wrote personality", "data": {"robot": robot_name, "bigo": bigo_personality, "traits": personality["self"]["traits"]}, "timestamp": int(_t.time()*1000), "hypothesisId": "C"}) + "\n")
-        # #endregion
     elif not personality_path.exists():
         personality = DEFAULT_PERSONALITY
         with open(personality_path, "w") as f:

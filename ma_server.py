@@ -238,12 +238,7 @@ def _is_antisocial_from_personality_file(
         traits = data.get("self", {}).get("traits", {})
         e = traits.get("e", 3)
         a = traits.get("a", 3)
-        result = e <= extraversion_max and a <= agreeableness_max
-        # #region agent log
-        _log_path = Path(__file__).resolve().parent / ".cursor" / "debug.log"
-        import time as _t; _log_path.parent.mkdir(parents=True, exist_ok=True); open(_log_path, "a").write(json.dumps({"location": "ma_server.py:_is_antisocial", "message": "antisocial check", "data": {"name": name, "e": e, "a": a, "e_max": extraversion_max, "a_max": agreeableness_max, "result": result}, "timestamp": int(_t.time()*1000), "hypothesisId": "A"}) + "\n")
-        # #endregion
-        return result
+        return e <= extraversion_max and a <= agreeableness_max
     except (json.JSONDecodeError, OSError, TypeError):
         return False
 
@@ -323,10 +318,6 @@ async def turn_manager_qualified(
         n for n in nao_names
         if not _is_antisocial_from_personality_file(root, n, e_max, a_max)
     ]
-    # #region agent log
-    _log_path = Path(__file__).resolve().parent / ".cursor" / "debug.log"
-    import time as _t; _log_path.parent.mkdir(parents=True, exist_ok=True); open(_log_path, "a").write(json.dumps({"location": "ma_server.py:turn_manager_qualified", "message": "final qualified list", "data": {"directed": directed, "nao_names": nao_names, "qualified": qualified}, "timestamp": int(_t.time()*1000), "hypothesisId": "B"}) + "\n")
-    # #endregion
     return qualified
 
 
@@ -585,11 +576,9 @@ _LISTEN_MAX_EMPTY_RETRIES = 5
 
 def listen_for_human_input(prompt: str) -> str:
     # record from microphone until user stops speaking, when --listen is set
-    # transcribe with Whisper
+    # transcribe with Google Speech Recognition
 
     recognizer = sr.Recognizer()
-    client = OpenAI()
-    _LISTEN_WAV_PATH.parent.mkdir(parents=True, exist_ok=True)
 
     for attempt in range(_LISTEN_MAX_EMPTY_RETRIES):
         print(prompt)
@@ -608,23 +597,18 @@ def listen_for_human_input(prompt: str) -> str:
             print("[Listen] Microphone error: %s. Try again." % e)
             continue
 
-        wav_data = audio.get_wav_data()
-        _LISTEN_WAV_PATH.write_bytes(wav_data)
-
         try:
-            with open(_LISTEN_WAV_PATH, "rb") as f:
-                transcript = client.audio.transcriptions.create(
-                    model="whisper-1",
-                    file=f,
-                    response_format="text",
-                )
-        except Exception as e:
-            print("[Listen] Transcription error: %s. Try again." % e)
+            transcript = recognizer.recognize_google(audio)
+            if transcript and isinstance(transcript, str) and transcript.strip():
+                print("[Listen] Transcribed: %s" % transcript.strip())
+                return transcript.strip()
+            print("No speech detected. Try again.")
+        except sr.UnknownValueError:
+            print("Sorry, I did not understand that. Try again.")
             continue
-
-        if transcript and isinstance(transcript, str) and transcript.strip():
-            return transcript.strip()
-        print("No speech detected. Try again.")
+        except sr.RequestError:
+            print("Speech Recognition service is not available. Try again.")
+            continue
 
     print("[Listen] Max retries reached. Falling back to keyboard input.")
     return input(prompt)
