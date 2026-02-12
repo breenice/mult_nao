@@ -371,7 +371,7 @@ async def reason_with_vision(
 
 
 # ====== NAO Agent Factory (autogen agents from config: robot name, ip, personality) ======
-def create_nao_agent(agent_config: dict, root: Path, agent_index: int, socket, session_context: Optional[dict] = None):
+def create_nao_agent(agent_config: dict, root: Path, agent_index: int, socket, session_context: Optional[dict] = None, all_agent_names: Optional[List[str]] = None):
     # agent_config: name (physical robot name), ip, bigo_personality. All paths and identity use this name.
     # Persistent data: session/<robot_name>/ (personality.json, memory db, see.jpg, sound.wav, conversation.jsonl)
     robot_name = str(agent_config.get("name", "Agent")).strip()
@@ -464,19 +464,23 @@ def create_nao_agent(agent_config: dict, root: Path, agent_index: int, socket, s
     tool_list_str = ", ".join(tool_names)
 
     _sys_msg = (
-        f"Your name is {robot_name}. You must ALWAYS refer to yourself as {robot_name} — never use another robot's name when talking about yourself.\n"
-        f"You are a NAO robot in a multi-agent conversation with other robots and a human.\n\n"
+        f"Your name is {robot_name}.\n\n"
+        f"WHO YOU RESPOND TO:\n"
+        f"- You respond ONLY to the most recent message from Human.\n"
+        f"- Other robots (like {', '.join(n for n in all_agent_names if n != robot_name) if all_agent_names else 'teammates'}) are your teammates — they respond separately to the same Human message.\n"
+        f"- Do NOT react to, reply to, correct, or address anything another robot said.\n"
+        f"- Do NOT reference other robots' responses. Pretend you cannot see them.\n"
+        f"- Speak directly to the Human as if you are the only robot responding.\n\n"
         f"Personality:\n{personality_text}\n\n"
         f"REQUIRED TOOL CALL SEQUENCE FOR EVERY TURN:\n"
         f"You MUST call tools in this order every turn. NEVER produce a text-only response.\n"
         f"  Step 1: Call recall_memory(query) to retrieve relevant memories about the topic.\n"
-        f"  Step 2: Call one or more ACTION tools (speak, wave, nod, etc.) to respond to the user. This step is MANDATORY — you must ALWAYS call at least speak().\n"
-        f"  Step 3: If the user shared new information (name, interests, preferences), call save_memory to store it.\n\n"
-        f"CRITICAL: recall_memory alone is NEVER enough. After recall_memory, you MUST call speak() or another action tool. A turn without speak/wave/nod is a failed turn.\n\n"
+        f"  Step 2: Call one or more ACTION tools (speak, wave, nod, etc.) to respond to the Human. This step is MANDATORY — you must ALWAYS call at least speak().\n"
+        f"  Step 3: If the Human shared new information (name, interests, preferences), call save_memory to store it.\n\n"
+        f"CRITICAL: recall_memory alone is NEVER enough. After recall_memory, you MUST call speak() or another action tool.\n\n"
         f"IDENTITY RULES:\n"
         f"- You are {robot_name}. When asked your name, say \"{robot_name}\".\n"
-        f"- Do NOT repeat or copy what other robots have already said. Give your own unique response.\n"
-        f"- Do NOT speak on behalf of other robots (e.g. do not say \"I am ANGEL\" if you are SAM).\n"
+        f"- Do NOT use another robot's name when referring to yourself.\n"
         f"- Stay in character with your personality traits.\n\n"
         f"Available tools: {tool_list_str}.\n"
         f"Always respond with tool calls only — NEVER respond with plain text.\n\n"
@@ -768,9 +772,10 @@ async def multi_nao_chat(agents_list: List[dict], use_listen: bool = False):
     root = Path(__file__).resolve().parent
     sock = _create_nao_socket(NAO_BASE_PORT)
     session_context = {"round": 0}
+    all_agent_names = [str(ac.get("name", "Agent")).strip() for ac in agents_list]
     nao_agents = []
     for i, agent_config in enumerate(agents_list):
-        nao_agents.append(create_nao_agent(agent_config, root, i, sock, session_context=session_context))
+        nao_agents.append(create_nao_agent(agent_config, root, i, sock, session_context=session_context, all_agent_names=all_agent_names))
 
     nao_names = [a.name for a in nao_agents]
     name_to_d_personality: Dict[str, str] = {a.name: (a.description or "") for a in nao_agents}
