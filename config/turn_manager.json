@@ -1,5 +1,3 @@
 {
-  "anti_social_extraversion_max": 2,
-  "anti_social_agreeableness_max": 2,
-  "require_facing_when_directed": true
+  "require_facing_when_directed": false
 }

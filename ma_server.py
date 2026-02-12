@@ -184,26 +184,17 @@ _TURN_MANAGER_CONFIG_PATH = Path(__file__).resolve().parent / "config" / "turn_m
 
 
 def _load_turn_manager_config() -> dict:
+    defaults = {
+        "require_facing_when_directed": False,
+    }
     if not _TURN_MANAGER_CONFIG_PATH.exists() or _TURN_MANAGER_CONFIG_PATH.stat().st_size == 0:
-        return {
-            "anti_social_extraversion_max": 2,
-            "anti_social_agreeableness_max": 2,
-            "require_facing_when_directed": True,
-        }
+        return defaults
     try:
         with open(_TURN_MANAGER_CONFIG_PATH, "r") as f:
             data = json.load(f)
-        return {
-            "anti_social_extraversion_max": data.get("anti_social_extraversion_max", 2),
-            "anti_social_agreeableness_max": data.get("anti_social_agreeableness_max", 2),
-            "require_facing_when_directed": data.get("require_facing_when_directed", True),
-        }
+        return {k: data.get(k, v) for k, v in defaults.items()}
     except (json.JSONDecodeError, OSError):
-        return {
-            "anti_social_extraversion_max": 2,
-            "anti_social_agreeableness_max": 2,
-            "require_facing_when_directed": True,
-        }
+        return defaults
 
 
 def _read_facing_per_robot(root: Path, nao_names: List[str]) -> Dict[str, bool]:
@@ -221,26 +212,6 @@ def _read_facing_per_robot(root: Path, nao_names: List[str]) -> Dict[str, bool]:
             result[name] = False
     return result
 
-
-def _is_antisocial_from_personality_file(
-    root: Path,
-    name: str,
-    extraversion_max: int,
-    agreeableness_max: int,
-) -> bool:
-    # true if robot's personality.json has e at least extraversion_max and a at least agreeableness_max
-    path = get_session_dir(root, name) / "personality.json"
-    try:
-        if not path.exists():
-            return False
-        with open(path, "r") as f:
-            data = json.load(f)
-        traits = data.get("self", {}).get("traits", {})
-        e = traits.get("e", 3)
-        a = traits.get("a", 3)
-        return e <= extraversion_max and a <= agreeableness_max
-    except (json.JSONDecodeError, OSError, TypeError):
-        return False
 
 
 def _directed_at_robot_heuristic(message: str, nao_names: List[str]) -> Optional[str]:
@@ -297,28 +268,20 @@ async def turn_manager_qualified(
     last_message: str,
     nao_names: List[str],
     root: Path,
-    e_max: int,
-    a_max: int,
     require_facing_when_directed: bool,
     name_to_facing: Dict[str, bool],
 ) -> List[str]:
     # return ordered list of robot names qualified to speak this round
-    # - If message is directed at one robot: return [that_robot] (or [] if disqualified)
-    # - Otherwise: all non-anti-social robots in config order
+    # - If message is directed at one robot: return [that_robot] (or [] if facing check fails)
+    # - Otherwise: all robots in config order
     directed = _directed_at_robot_heuristic(last_message, nao_names)
     if directed is None:
         directed = await _directed_at_robot_llm(last_message, nao_names)
     if directed is not None:
-        if _is_antisocial_from_personality_file(root, directed, e_max, a_max):
-            return []
         if require_facing_when_directed and not name_to_facing.get(directed, False):
             return []
         return [directed]
-    qualified = [
-        n for n in nao_names
-        if not _is_antisocial_from_personality_file(root, n, e_max, a_max)
-    ]
-    return qualified
+    return list(nao_names)
 
 
 def _see_jpg_is_valid(see_path: Path) -> bool:
@@ -777,8 +740,6 @@ async def multi_nao_chat(agents_list: List[dict], use_listen: bool = False):
     nao_names = [a.name for a in nao_agents]
     name_to_d_personality: Dict[str, str] = {a.name: (a.description or "") for a in nao_agents}
     turn_manager_config = _load_turn_manager_config()
-    e_max = turn_manager_config["anti_social_extraversion_max"]
-    a_max = turn_manager_config["anti_social_agreeableness_max"]
     require_facing = turn_manager_config["require_facing_when_directed"]
 
     # State for "all qualified robots speak then human": current round's qualified list and index
@@ -804,11 +765,12 @@ async def multi_nao_chat(agents_list: List[dict], use_listen: bool = False):
             current_round_qualified.clear()
             current_round_qualified.extend(
                 await turn_manager_qualified(
-                    last_msg, nao_names, root, e_max, a_max, require_facing, name_to_facing
+                    last_msg, nao_names, root, require_facing, name_to_facing,
                 )
             )
             round_state["index"] = 0
             if not current_round_qualified:
+                print("[TURN MANAGER] No agents qualified for message: %r" % last_msg[:80])
                 return HUMAN_NAME
             round_state["index"] = 1
             print("[TURN MANAGER] Qualified: %s (from message: %r)" % (current_round_qualified, last_msg[:80]))
@@ -823,9 +785,9 @@ async def multi_nao_chat(agents_list: List[dict], use_listen: bool = False):
     def candidate_func(thread: Sequence[BaseAgentEvent | BaseChatMessage]) -> List[str]:
         last_source, _ = _last_speaker_and_robot_count(thread, nao_names)
         if _is_human_source(last_source) or last_source is None:
-            if not current_round_qualified:
-                return [HUMAN_NAME]
-            return [current_round_qualified[0]]
+            # New human turn: return all possible speakers so vlm_selector can filter.
+            # candidate_func runs before vlm_selector, so current_round_qualified is stale here.
+            return nao_names + [HUMAN_NAME]
         if round_state["index"] < len(current_round_qualified):
             return [current_round_qualified[round_state["index"]]]
         return [HUMAN_NAME]
@@ -849,7 +811,7 @@ async def multi_nao_chat(agents_list: List[dict], use_listen: bool = False):
     result = await team.run(task=initial_message)
 
     # Session logging: from result.messages derive user_prompt / agent_response per NAO turn
-    nao_names = {a.name for a in nao_agents}
+    nao_names_set = {a.name for a in nao_agents}
     nao_by_name = {a.name: a for a in nao_agents}
     messages = getattr(result, "messages", []) or []
     last_text = ""
@@ -857,17 +819,12 @@ async def multi_nao_chat(agents_list: List[dict], use_listen: bool = False):
         source = _message_source_name(msg)
         text = _message_text(msg)
         round_id = idx // (1 + len(nao_agents))
-        if source and source in nao_names:
+        if source and source in nao_names_set:
             nao = nao_by_name[source]
             nao.session_logger.log("user_prompt", {"message": last_text}, round_id=round_id)
             nao.session_logger.log("agent_response", {"text": text}, round_id=round_id)
         if text.strip():
             last_text = text
-        if source:
-            print(f"[{source}]: {text[:200]}{'...' if len(text) > 200 else ''}")
-        # Allow time for robot to finish speaking/acting before next agent
-        if source and source in nao_names:
-            await asyncio.sleep(10)
 
 
 
