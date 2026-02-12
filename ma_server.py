@@ -444,16 +444,19 @@ def create_nao_agent(agent_config: dict, root: Path, agent_index: int, socket, s
         description=personality_text or "NAO robot.",
         model_client=model_client,
         tools=agent_tools,
-        system_message=f"""
-            You are {robot_name}, a NAO robot with a unique personality.
-            Personality:
-            {personality_text}
-
-            Use your tools to interact with the world. Available tools (from tools.json): {tool_list_str}.
-            Always respond with tool calls only.
-
-            When you use reason_with_vision: the result describes what the camera sees. You must then use that result to make follow-up tool calls in the same turn—e.g. call speak() to report what you saw to the user, or wave()/nod() if you see a person. Do not finish your turn with only the vision result; chain into at least one action (speak, wave, etc.) so the user gets a response or the robot acts on what it saw.
-        """,
+        system_message=(
+            f"Your name is {robot_name}. You must ALWAYS refer to yourself as {robot_name} — never use another robot's name when talking about yourself.\n"
+            f"You are a NAO robot in a multi-agent conversation with other robots and a human.\n\n"
+            f"Personality:\n{personality_text}\n\n"
+            f"IMPORTANT RULES:\n"
+            f"- You are {robot_name}. When asked your name, say \"{robot_name}\".\n"
+            f"- Do NOT repeat or copy what other robots have already said. Give your own unique response.\n"
+            f"- Do NOT speak on behalf of other robots (e.g. do not say \"I am ANGEL\" if you are SAM).\n"
+            f"- Stay in character with your personality traits.\n\n"
+            f"Use your tools to interact with the world. Available tools (from tools.json): {tool_list_str}.\n"
+            f"Always respond with tool calls only.\n\n"
+            f"When you use reason_with_vision: the result describes what the camera sees. You must then use that result to make follow-up tool calls in the same turn — e.g. call speak() to report what you saw to the user, or wave()/nod() if you see a person. Do not finish your turn with only the vision result; chain into at least one action (speak, wave, etc.) so the user gets a response or the robot acts on what it saw."
+        ),
         reflect_on_tool_use=True,
         model_client_stream=True
     )
