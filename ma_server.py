@@ -149,7 +149,7 @@ def _create_nao_socket(port: int):
     try:
         sock = _nao_context.socket(zmq.REQ)
         sock.setsockopt(zmq.LINGER, 0)
-        sock.setsockopt(zmq.RCVTIMEO, 5000)
+        sock.setsockopt(zmq.RCVTIMEO, 30000) # 30 sec speaking timeout
         sock.connect("tcp://%s:%s" % (NAO_SOCKET_HOST, port))
         return sock
     except Exception as e:

@@ -25,7 +25,7 @@ def toggle_breath(enable):
 def speak(message):
     message_str = message.encode('utf-8')
     message_str = "\\style=didactic\\ \\vol="+str(speech_volume)+"\\ \\wait=5\\" + message_str
-    tts.post.say(message_str)
+    tts.say(message_str)
 
 def walk(x,y,theta):
     walk_config = [["MaxStepX", 0.04],       # Smaller steps
