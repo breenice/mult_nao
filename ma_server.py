@@ -16,7 +16,7 @@ from tinydb import TinyDB
 from modules.memory.memory_agent import MemoryAgent
 from modules.llm.input_names import ensure_session_folder, get_session_dir
 from autogen_agentchat.agents import AssistantAgent, UserProxyAgent
-from autogen_agentchat.conditions import MaxMessageTermination
+from autogen_agentchat.conditions import MaxMessageTermination, TextMentionTermination
 from autogen_agentchat.teams import SelectorGroupChat
 from autogen_agentchat.messages import BaseAgentEvent, BaseChatMessage
 from autogen_core.tools import FunctionTool
@@ -836,9 +836,7 @@ async def multi_nao_chat(agents_list: List[dict], use_listen: bool = False):
     human = UserProxyAgent(name="Human", input_func=input_func)
 
     participants = [human] + nao_agents
-    num_rounds = 5
-    max_messages = num_rounds * (1 + len(nao_agents))
-    termination = MaxMessageTermination(max_messages)
+    termination = TextMentionTermination("goodbye") | TextMentionTermination("bye") | TextMentionTermination("exit")
     team = SelectorGroupChat(
         participants,
         model_client=model_client,
