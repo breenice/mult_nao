@@ -297,14 +297,12 @@ def _see_jpg_is_valid(see_path: Path) -> bool:
 
 async def reason_with_vision(
     agent_name: str,
-    memory_agent: MemoryAgent,
     prompt: str,
     see_path: Path,
     send_fn: Optional[Any] = None,
 ):
     # use image + prompt, must send an action (speak as fallback)
     print("[VISION] reason_with_vision called for %s, prompt=%r, see_path=%s" % (agent_name, prompt, see_path))
-    memory = memory_agent.run_once(prompt)
     if not _see_jpg_is_valid(see_path):
         print("[VISION] Skipped (see.jpg missing or too small): %s" % see_path)
         return "No camera image available yet. The camera may not have sent a frame, or the image file is missing or too small."
@@ -325,8 +323,7 @@ async def reason_with_vision(
         client = OpenAI()
         system = (
             f"You are {agent_name}, a NAO robot observing through a camera. "
-            "Answer ONLY with the speak tool. Limit to 1 sentence. Speak in first person (e.g. I see...).\n\n"
-            f"---- Memory ----\n{memory}\n"
+            "Answer ONLY with the speak tool. Limit to 1 sentence. Speak in first person (e.g. I see...)."
         )
         response = client.chat.completions.create(
             model="gpt-4o-mini",
@@ -453,7 +450,7 @@ def create_nao_agent(agent_config: dict, root: Path, agent_index: int, socket, s
         description = fn_def.get("description", fn_name) or fn_name
         if fn_name == "reason_with_vision":
             async def vision_tool(prompt: str) -> str:
-                return await reason_with_vision(robot_name, memory_agent, prompt, see_path, send_fn=send_for_this_agent)
+                return await reason_with_vision(robot_name, prompt, see_path, send_fn=send_for_this_agent)
             vision_tool.__name__ = "reason_with_vision"
             agent_tools.append(FunctionTool(vision_tool, description=description, name=fn_name))
         else:
