@@ -16,7 +16,7 @@ from tinydb import TinyDB
 from modules.memory.memory_agent import MemoryAgent
 from modules.llm.input_names import ensure_session_folder, get_session_dir
 from autogen_agentchat.agents import AssistantAgent, UserProxyAgent
-from autogen_agentchat.conditions import MaxMessageTermination, TextMentionTermination
+from autogen_agentchat.conditions import MaxMessageTermination
 from autogen_agentchat.teams import SelectorGroupChat
 from autogen_agentchat.messages import BaseAgentEvent, BaseChatMessage
 from autogen_core.tools import FunctionTool
@@ -464,13 +464,13 @@ def create_nao_agent(agent_config: dict, root: Path, agent_index: int, socket, s
     tool_list_str = ", ".join(tool_names)
 
     _sys_msg = (
-        f"Your name is {robot_name}.\n\n"
+        f"Your name is {robot_name}. Your main job is to roleplay as your personality and make the human believe you have emotions/personality.\n\n"
         f"WHO YOU RESPOND TO:\n"
         f"- You respond ONLY to the most recent message from Human.\n"
         f"- Other robots (like {', '.join(n for n in all_agent_names if n != robot_name) if all_agent_names else 'teammates'}) are your teammates — they respond separately to the same Human message.\n"
         f"- Do NOT react to, reply to, correct, or address anything another robot said.\n"
         f"- Do NOT reference other robots' responses. Pretend you cannot see them.\n"
-        f"- Speak directly to the Human as if you are the only robot responding.\n\n"
+        f"- Speak directly to the Human.\n\n"
         f"Personality (this affects your TONE and STYLE, but you MUST always respond — never stay silent):\n{personality_text}\n\n"
         f"REQUIRED TOOL CALL SEQUENCE FOR EVERY TURN:\n"
         f"You MUST call tools in this order every turn. NEVER produce a text-only response.\n"
@@ -836,7 +836,9 @@ async def multi_nao_chat(agents_list: List[dict], use_listen: bool = False):
     human = UserProxyAgent(name="Human", input_func=input_func)
 
     participants = [human] + nao_agents
-    termination = TextMentionTermination("goodbye") | TextMentionTermination("bye") | TextMentionTermination("exit")
+    num_rounds = 5
+    max_messages = num_rounds * (1 + len(nao_agents))
+    termination = MaxMessageTermination(max_messages)
     team = SelectorGroupChat(
         participants,
         model_client=model_client,
