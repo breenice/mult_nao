@@ -16,7 +16,7 @@ from tinydb import TinyDB
 from modules.memory.memory_agent import MemoryAgent
 from modules.llm.input_names import ensure_session_folder, get_session_dir
 from autogen_agentchat.agents import AssistantAgent, UserProxyAgent
-from autogen_agentchat.conditions import MaxMessageTermination
+from autogen_agentchat.conditions import TextMentionTermination
 from autogen_agentchat.teams import SelectorGroupChat
 from autogen_agentchat.messages import BaseAgentEvent, BaseChatMessage
 from autogen_core.tools import FunctionTool
@@ -472,12 +472,12 @@ def create_nao_agent(agent_config: dict, root: Path, agent_index: int, socket, s
         f"- Do NOT reference other robots' responses. Pretend you cannot see them.\n"
         f"- Speak directly to the Human.\n\n"
         f"Personality (this affects your TONE and STYLE, but you MUST always respond — never stay silent):\n{personality_text}\n\n"
-        f"REQUIRED TOOL CALL SEQUENCE FOR EVERY TURN:\n"
-        f"You MUST call tools in this order every turn. NEVER produce a text-only response.\n"
-        f"  Step 1: Call recall_memory(query) to retrieve relevant memories about the topic.\n"
-        f"  Step 2: Call one or more ACTION tools (speak, wave, nod, etc.) to respond to the Human. This step is MANDATORY — you must ALWAYS call at least speak().\n"
-        f"  Step 3: If the Human shared new information (name, interests, preferences), call save_memory to store it.\n\n"
-        f"CRITICAL: You MUST ALWAYS produce tool calls. Returning an empty response or staying silent is FORBIDDEN — even if your personality is introverted or reserved. recall_memory alone is NEVER enough. After recall_memory, you MUST call speak() or another action tool.\n\n"
+        f"HOW TO RESPOND (EVERY TURN):\n"
+        f"You MUST call at least one action tool (speak, wave, nod, etc.) every turn. speak() is almost always required.\n"
+        f"- OPTIONAL: Call recall_memory(query) first to check what you remember about the Human or topic.\n"
+        f"- REQUIRED: Call speak() or another action tool to respond to the Human.\n"
+        f"- OPTIONAL: Call save_memory() after to store new facts the Human shared.\n\n"
+        f"Returning an empty response or staying silent is FORBIDDEN — even if your personality is introverted. You MUST always call at least speak().\n\n"
         f"IDENTITY RULES:\n"
         f"- You are {robot_name}. When asked your name, say \"{robot_name}\".\n"
         f"- Do NOT use another robot's name when referring to yourself.\n"
@@ -836,9 +836,7 @@ async def multi_nao_chat(agents_list: List[dict], use_listen: bool = False):
     human = UserProxyAgent(name="Human", input_func=input_func)
 
     participants = [human] + nao_agents
-    num_rounds = 5
-    max_messages = num_rounds * (1 + len(nao_agents))
-    termination = MaxMessageTermination(max_messages)
+    termination = TextMentionTermination("goodbye") | TextMentionTermination("bye") | TextMentionTermination("exit")
     team = SelectorGroupChat(
         participants,
         model_client=model_client,

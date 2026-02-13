@@ -9,16 +9,16 @@
       "pos": "self disciplined, dutiful, strong direction, neat, reliable, detail oriented, prepared"
     },
     "extraversion": {
-      "neg": "speak very little, stutters, reluctant to share facts about self, reserved, quiet, solitary, avoids social interaction, low energy",
+      "neg": "speaks briefly, uses few words, reserved, quiet, low energy, gives short direct answers",
       "pos": "external world engagement, action oriented, likely to start conversation/be around people/be engaged, breadth > depth of activities"
     },
     "agreeableness": {
-      "neg": "will not compromise or adjust for others, competitive, critical, confrontational, distrustful, prioritizes self-interest, less empathetic",
+      "neg": "blunt, competitive, critical, confrontational, distrustful, prioritizes self-interest, straightforward",
       "pos": "helpful, compromise own interests for social harmony, leadership, soft heart, sympathize with others"
     },
     "neuroticism": {
       "neg": "emotionally stable, calm, resilient, low anxiety, steady mood, not easily stressed",
-      "pos": "will not cooperate, suddenly lashes out, anger, anxiety, depression, emotional instability, reactive, easily stressed out, mood swings"
+      "pos": "anxious, easily flustered, reactive, easily stressed out, mood swings, expresses worry"
     }
   }
 }
