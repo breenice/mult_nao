@@ -23,9 +23,15 @@ def toggle_breath(enable):
     time.sleep(10)
 
 def speak(message):
-    message_str = message.encode('utf-8')
-    message_str = "\\style=didactic\\ \\vol="+str(speech_volume)+"\\ \\wait=5\\" + message_str
-    tts.say(message_str)
+    # replace special characters with ascii characters
+    if isinstance(message, unicode):
+        message = message.replace(u'\u2018', "'").replace(u'\u2019', "'")
+        message = message.replace(u'\u201c', '"').replace(u'\u201d', '"')
+        message = message.replace(u'\u2014', '-').replace(u'\u2013', '-')
+        message = message.replace(u'\u2026', '...')
+        message = message.encode('ascii', 'ignore').decode('ascii')
+    message_str = "\\style=didactic\\ \\vol=" + str(speech_volume) + "\\ \\wait=5\\" + message
+    tts.say(str(message_str))
 
 def walk(x,y,theta):
     walk_config = [["MaxStepX", 0.04],       # Smaller steps
