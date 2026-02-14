@@ -269,22 +269,29 @@ def shutdown(sig, frame):
 
 def capture_image():
     while running:
-        nao_image = vision_service.getImageRemote(vision_client)
-        width = nao_image[0] 
-        height = nao_image[1] 
-        raw_image = nao_image[6] 
-            
-        byte_img = np.frombuffer(raw_image, dtype=np.uint8) # into numpy array
-        resized_img = byte_img.reshape((height, width, 3)) # flat array
-        img = cv2.cvtColor(resized_img, cv2.COLOR_RGB2BGR) # rgb to bgr
+        try:
+            nao_image = vision_service.getImageRemote(vision_client)
+            if nao_image is None:
+                print("[capture_image] getImageRemote returned None, retrying...")
+                time.sleep(0.5)
+                continue
+            width = nao_image[0]
+            height = nao_image[1]
+            raw_image = nao_image[6]
 
-        # Release the image AFTER using it
-        vision_service.releaseImage(vision_client)
+            byte_img = np.frombuffer(raw_image, dtype=np.uint8)
+            resized_img = byte_img.reshape((height, width, 3))
+            img = cv2.cvtColor(resized_img, cv2.COLOR_RGB2BGR)
 
-        tmp_file = os.path.join(SESSION_FOLDER, "see_tmp.jpg")
-        final_file = os.path.join(SESSION_FOLDER, "see.jpg")
-        cv2.imwrite(tmp_file, img)
-        os.rename(tmp_file, final_file)
+            # Release the image AFTER using it
+            vision_service.releaseImage(vision_client)
+
+            tmp_file = os.path.join(SESSION_FOLDER, "see_tmp.jpg")
+            final_file = os.path.join(SESSION_FOLDER, "see.jpg")
+            cv2.imwrite(tmp_file, img)
+            os.rename(tmp_file, final_file)
+        except Exception as e:
+            print("[capture_image] Error: %s" % e)
 
         time.sleep(0.05)  # reduce CPU load
 
