@@ -102,6 +102,28 @@ def _ensure_session_folder(root, robot_name):
     return folder
 
 
+def _capture_image_loop(vision_svc, vision_clt, session_folder, running_flag):
+    # camera capture loop for one robot. Runs in a daemon thread
+    while running_flag["running"]:
+        try:
+            nao_image = vision_svc.getImageRemote(vision_clt)
+            if nao_image is None:
+                print("[capture_image] getImageRemote returned None, retrying...")
+                time.sleep(0.5)
+                continue
+            width, height, raw_image = nao_image[0], nao_image[1], nao_image[6]
+            byte_img = np.frombuffer(raw_image, dtype=np.uint8)
+            img = cv2.cvtColor(byte_img.reshape((height, width, 3)), cv2.COLOR_RGB2BGR)
+            vision_svc.releaseImage(vision_clt)
+            tmp = os.path.join(session_folder, "see_tmp.jpg")
+            final = os.path.join(session_folder, "see.jpg")
+            cv2.imwrite(tmp, img)
+            os.rename(tmp, final)
+        except Exception as e:
+            print("[capture_image] Error: %s" % e)
+        time.sleep(0.05)
+
+
 def run_multi_port(args, agent_list=None):
     # single port (NAO_BASE_PORT); receive messages with agent index, dispatch by agent id.
     if agent_list is None:
@@ -130,8 +152,35 @@ def run_multi_port(args, agent_list=None):
     poller = zmq.Poller()
     poller.register(sock, zmq.POLLIN)
 
+    # --- Per-robot camera threads ---
+    vision_clients = []  # for cleanup on shutdown
+    if connection == "speech" and mode == "execute":
+        for robot_name in agent_list:
+            if robot_name not in ROBOT_IPS:
+                continue
+            robot_ip = ROBOT_IPS[robot_name]
+            folder = _ensure_session_folder(PROJECT_ROOT, robot_name)
+            try:
+                vs = ALProxy("ALVideoDevice", robot_ip, ZMQ_PORT)
+                vc = vs.subscribe("camera_" + robot_name, 2, 11, 30)
+                vision_clients.append((vs, vc, robot_name))
+                t = threading.Thread(target=_capture_image_loop, args=(vs, vc, folder, state))
+                t.daemon = True
+                t.start()
+                # Enable face tracking
+                actions.init(robot_ip, ZMQ_PORT)
+                actions.track_face(True)
+                print("[%s] Camera started (ip=%s)" % (robot_name, robot_ip))
+            except Exception as e:
+                print("[%s] Camera setup failed: %s" % (robot_name, e))
+
     def shutdown_multi(sig, frame):
         state["running"] = False
+        for vs, vc, name in vision_clients:
+            try:
+                vs.unsubscribe(vc)
+            except Exception:
+                pass
 
     signal.signal(signal.SIGINT, shutdown_multi)
     try:
