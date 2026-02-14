@@ -238,6 +238,7 @@ _listen_calibrated = False
 def listen_for_human_input(prompt: str) -> str:
     # record from microphone until user stops speaking, when --listen is set
     # transcribe with Google Speech Recognition
+    global _listen_calibrated
 
     # one-time noise calibration on first call
     if not _listen_calibrated:
