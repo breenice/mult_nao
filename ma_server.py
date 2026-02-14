@@ -227,20 +227,35 @@ _LISTEN_WAV_PATH = Path(__file__).resolve().parent / "input" / "listen.wav"
 _LISTEN_TIMEOUT = 5
 _LISTEN_PHRASE_TIME_LIMIT = 10
 _LISTEN_MAX_EMPTY_RETRIES = 5
+#
+_recognizer = sr.Recognizer()
+_recognizer.dynamic_energy_threshold = False
+_recognizer.energy_threshold = 300  # fixed threshold; tune for your environment
+_recognizer.pause_threshold = 0.5   # faster end-of-speech detection (default 0.8)
+_listen_calibrated = False
 
 
 def listen_for_human_input(prompt: str) -> str:
     # record from microphone until user stops speaking, when --listen is set
     # transcribe with Google Speech Recognition
 
-    recognizer = sr.Recognizer()
+    # one-time noise calibration on first call
+    if not _listen_calibrated:
+        print("[Listen] Calibrating for ambient noise (1s)...")
+        try:
+            with sr.Microphone() as source:
+                _recognizer.adjust_for_ambient_noise(source, duration=1)
+            print("[Listen] Calibrated. Energy threshold = %d" % _recognizer.energy_threshold)
+        except OSError as e:
+            print("[Listen] Calibration failed: %s (using default threshold)" % e)
+        _listen_calibrated = True
 
     for attempt in range(_LISTEN_MAX_EMPTY_RETRIES):
         print(prompt)
         print("Listening... (speak now; recording stops when you pause)")
         try:
             with sr.Microphone() as source:
-                audio = recognizer.listen(
+                audio = _recognizer.listen(
                     source,
                     timeout=_LISTEN_TIMEOUT,
                     phrase_time_limit=_LISTEN_PHRASE_TIME_LIMIT,
@@ -253,7 +268,7 @@ def listen_for_human_input(prompt: str) -> str:
             continue
 
         try:
-            transcript = recognizer.recognize_google(audio)
+            transcript = _recognizer.recognize_google(audio)
             if transcript and isinstance(transcript, str) and transcript.strip():
                 print("[Listen] Transcribed: %s" % transcript.strip())
                 return transcript.strip()
