@@ -26,6 +26,7 @@ CLEAR_CMD = 'cls' if ios_name == 'Windows' else 'clear'
 class MemoryAgent:
     def __init__(
         self,
+        agent_name: str = "agent",
         db_path: str | None = None,
         model_name: str = "gpt-4o",
         embedding_model: str = "text-embedding-3-large",
@@ -36,6 +37,7 @@ class MemoryAgent:
         else:
             db_path = Path(db_path)
             db_path.mkdir(parents=True, exist_ok=True)
+        self.agent_name = agent_name
         self.db_path = str(db_path)
 
         # Initialize LLM and embeddings
@@ -93,12 +95,12 @@ class MemoryAgent:
         _SYSTEM_TEMPLATE = """You are a memory agent of a Nao Robot. The robot have long term memory and action capabilities. 
         You work to store memories and retrieve them. Your response will then be passed to an action agent. So by your response, you will comunicate with that action agent.
 
-        User's name is {username}. Today is {date}.
+        Today is {date}.
         Memories are saved with conversation date.
         There are three types of memories: semantic, episodic, procedural.
         memory_type: "semantic"
         for storing:
-        - facts about the user. Like username, address, personal preference like favourite color, food etc
+        - facts about the user. Like address, personal preference like favourite color, food etc
         - Personal information like the institution user is studying, company he is doing job etc.
         memory_type: "episodic"
         for storing:
@@ -186,10 +188,10 @@ class MemoryAgent:
         else:
             messages = user_input
 
-        # build config with a user_id and thread_id (date)
+        # build config with a user_id (robot name) and thread_id (date)
         config = {
             "configurable": {
-                "user_id": "planner",  # or whatever identifier you like
+                "user_id": self.agent_name,
                 "thread_id": time.strftime("%Y-%m-%d", time.localtime())
             }
         }

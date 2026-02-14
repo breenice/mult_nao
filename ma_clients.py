@@ -27,25 +27,19 @@ try:
 except ImportError:
     print("Error importing nao_config")
     sys.exit(1) 
-face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
-eye_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_eye.xml')
 ZMQ_PORT = 9559
 
 timestep_buffer = defaultdict(list)
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--connection", choices=["text", "speech"], default="speech",
-                    help="text: dummy IP, receive/print commands only; speech: connect to physical NAO")
+parser.add_argument("--connection", choices=["text", "speech"], default="speech", help="text: dummy IP, receive/print commands only; speech: connect to physical NAO")
 parser.add_argument("--mode", choices=["print", "execute"], default="execute")
 parser.add_argument("--port", type=int, default=None, help="ZMQ port (default: try from %s)" % _BASE_PORT)
 parser.add_argument("--robot", type=str, default="ANGEL")
 parser.add_argument("--multi", action="store_true", help="run single-port server (one port, dispatch by agent index from config)")
-parser.add_argument("--config", type=str, default=None,
-                    help="Path to agent config JSON (for --multi or --slot). Default: project_root/config/agent_config.json")
-parser.add_argument("--slot", type=int, default=None, metavar="N",
-                    help="Single-port mode for slot N (0-based) from agents config; uses port BASE+N and that entry's robot")
-parser.add_argument("--agent", action="append", metavar="ROBOT",
-                    help="For --multi: robot name (repeatable, e.g. --agent ANGEL --agent SAM). Overrides --config when provided.")
+parser.add_argument("--config", type=str, default=None, help="Path to agent config JSON (for --multi or --slot). Default: project_root/config/agent_config.json")
+parser.add_argument("--slot", type=int, default=None, metavar="N", help="Single-port mode for slot N (0-based) from agents config; uses port BASE+N and that entry's robot")
+parser.add_argument("--agent", action="append", metavar="ROBOT", help="For --multi: robot name (repeatable, e.g. --agent ANGEL --agent SAM). Overrides --config when provided.")
 
 # ----- Load agents from config: list of robot names (strings) only -----
 def _load_agents_from_file(path):
@@ -273,12 +267,7 @@ def shutdown(sig, frame):
     sys.exit(0)
 
 
-
-human_looking = False
-    
-
 def capture_image():
-    global human_looking
     while running:
         nao_image = vision_service.getImageRemote(vision_client)
         width = nao_image[0] 
@@ -292,28 +281,10 @@ def capture_image():
         # Release the image AFTER using it
         vision_service.releaseImage(vision_client)
 
-        # Face detection
-        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        faces = face_cascade.detectMultiScale(gray, 1.3, 5)
-
-        human_looking = False
-        for (x, y, w, h) in faces:
-            roi_gray = gray[y:y+h, x:x+w]
-            eyes = eye_cascade.detectMultiScale(roi_gray)
-            if len(eyes) > 0:
-                human_looking = True
-                break
-
         tmp_file = os.path.join(SESSION_FOLDER, "see_tmp.jpg")
         final_file = os.path.join(SESSION_FOLDER, "see.jpg")
         cv2.imwrite(tmp_file, img)
         os.rename(tmp_file, final_file)
-        facing_file = os.path.join(SESSION_FOLDER, "facing.txt")
-        try:
-            with open(facing_file, "w") as f:
-                f.write("true" if human_looking else "false")
-        except IOError:
-            pass
 
         time.sleep(0.05)  # reduce CPU load
 
@@ -391,6 +362,7 @@ def socket_send():
 if connection == "speech":
     actions.init(ROBOT_IP, ZMQ_PORT)
     if mode == "execute":
+        actions.track_face(True)
         vision_service = ALProxy("ALVideoDevice", ROBOT_IP, ZMQ_PORT)
         vision_client = vision_service.subscribe("python_camera_" + ROBOT_NAME, 2, 11, 30)
         camera_thread = threading.Thread(target=capture_image)

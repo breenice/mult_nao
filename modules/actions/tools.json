@@ -278,24 +278,5 @@
                 }
             }
         }
-    },
-    {
-    "type": "function",
-    "function": {
-        "name": "reason_with_vision",
-        "description": "Call when you need to see or use vision. Accesses nthe camera. Key words: see, find, look. You should use it frequently, especially after moving the head to a new direction.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "prompt": { "type": "string", "description": "prompt to direct nao on what to observe or describe" },
-                "timestep": {
-                    "type": "integer",
-                    "description": "Time step for synchronized execution"
-                }
-            },
-            "required": ["prompt"],
-            "additionalProperties": false
-            }
-        }
     }
 ]

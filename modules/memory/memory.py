@@ -1,3 +1,4 @@
+from doctest import debug
 import uuid
 from langchain_core.runnables import RunnableConfig
 from langchain_core.documents import Document
@@ -6,6 +7,13 @@ from langchain_openai.embeddings import OpenAIEmbeddings
 from langchain_chroma import Chroma
 
 embeddings = OpenAIEmbeddings(model="text-embedding-3-large")
+
+# print onlky if debug is True 
+debug = True
+
+def print_debug(message):
+    if debug:
+        print(message)
 
 class Memory:
     def __init__(self, db_dir: str = "./memory_db"):
@@ -38,12 +46,15 @@ class Memory:
         return memory
 
     def save_semantic_memory(self, memory: str, config: RunnableConfig) -> str:
+        print_debug(f"Saving semantic memory: {memory}")
         return self._save_memory(self.semantic_memory, memory, config)
 
     def save_episodic_memory(self, memory: str, config: RunnableConfig) -> str:
+        print_debug(f"Saving episodic memory: {memory}")
         return self._save_memory(self.episodic_memory, memory, config)
 
     def save_procedural_memory(self, memory: str, config: RunnableConfig) -> str:
+        print_debug(f"Saving procedural memory: {memory}")
         return self._save_memory(self.procedural_memory, memory, config)
 
     def _search_memory(self, store: Chroma, query: str, config: RunnableConfig) -> List[str]:
@@ -52,13 +63,19 @@ class Memory:
         return [f"{d.page_content}, {d.metadata['date']}" for d in docs]
 
     def search_semantic_memory(self, query: str, config: RunnableConfig) -> List[str]:
-        return self._search_memory(self.semantic_memory, query, config)
+        result = self._search_memory(self.semantic_memory, query, config)
+        print_debug(f"Semantic memory search result: {result}")
+        return result
 
     def search_episodic_memory(self, query: str, config: RunnableConfig) -> List[str]:
-        return self._search_memory(self.episodic_memory, query, config)
+        result = self._search_memory(self.episodic_memory, query, config)
+        print_debug(f"Episodic memory search result: {result}")
+        return result
 
     def search_procedural_memory(self, query: str, config: RunnableConfig) -> List[str]:
-        return self._search_memory(self.procedural_memory, query, config)
+        result = self._search_memory(self.procedural_memory, query, config)
+        print_debug(f"Procedural memory search result: {result}")
+        return result
 
     def get_full_long_term_memory(self, *args: Any, **kwargs: Any) -> List[str]:
         """Get all memories stored in Semantic, Episodic and Procedural Memory."""
