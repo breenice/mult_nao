@@ -235,10 +235,20 @@ _recognizer.pause_threshold = 0.5   # faster end-of-speech detection (default 0.
 _listen_calibrated = False
 
 
+def debug_logg(msg, data=None):
+    parts = ["[DEBUG]", msg]
+    if data:
+        parts.append(str(data))
+    print(" ".join(parts))
+
+
 def listen_for_human_input(prompt: str) -> str:
     # record from microphone until user stops speaking, when --listen is set
     # transcribe with Google Speech Recognition
     global _listen_calibrated
+
+
+    debug_logg("listen_entry", {"calibrated": _listen_calibrated, "energy_threshold": _recognizer.energy_threshold, "pause_threshold": _recognizer.pause_threshold, "dynamic": _recognizer.dynamic_energy_threshold})
 
     # one-time noise calibration on first call
     if not _listen_calibrated:
@@ -246,14 +256,23 @@ def listen_for_human_input(prompt: str) -> str:
         try:
             with sr.Microphone() as source:
                 _recognizer.adjust_for_ambient_noise(source, duration=1)
+            debug_logg("calibration_done", {"energy_threshold_after": _recognizer.energy_threshold})
             print("[Listen] Calibrated. Energy threshold = %d" % _recognizer.energy_threshold)
         except OSError as e:
+            debug_logg("calibration_failed", {"error": str(e)})
             print("[Listen] Calibration failed: %s (using default threshold)" % e)
         _listen_calibrated = True
+
+    try:
+        _mic_info = {"default_index": sr.Microphone.list_microphone_names()[:5]}
+    except Exception as _me:
+        _mic_info = {"error": str(_me)}
+    debug_logg("mic_devices", _mic_info)
 
     for attempt in range(_LISTEN_MAX_EMPTY_RETRIES):
         print(prompt)
         print("Listening... (speak now; recording stops when you pause)")
+        debug_logg("listen_attempt", {"attempt": attempt, "energy_threshold": _recognizer.energy_threshold, "pause_threshold": _recognizer.pause_threshold})
         try:
             with sr.Microphone() as source:
                 audio = _recognizer.listen(
@@ -261,23 +280,31 @@ def listen_for_human_input(prompt: str) -> str:
                     timeout=_LISTEN_TIMEOUT,
                     phrase_time_limit=_LISTEN_PHRASE_TIME_LIMIT,
                 )
+            _audio_data = audio.get_raw_data()
+            debug_logg("audio_captured", {"bytes": len(_audio_data), "sample_rate": audio.sample_rate, "sample_width": audio.sample_width, "duration_s": round(len(_audio_data) / (audio.sample_rate * audio.sample_width), 2)})
         except sr.WaitTimeoutError:
+            debug_logg("wait_timeout", {"attempt": attempt})
             print("No speech detected. Try again.")
             continue
         except OSError as e:
+            debug_logg("mic_os_error", {"attempt": attempt, "error": str(e)})
             print("[Listen] Microphone error: %s. Try again." % e)
             continue
 
         try:
             transcript = _recognizer.recognize_google(audio)
             if transcript and isinstance(transcript, str) and transcript.strip():
+                debug_logg("transcribed_ok", {"transcript": transcript.strip()})
                 print("[Listen] Transcribed: %s" % transcript.strip())
                 return transcript.strip()
+            debug_logg("empty_transcript", {"transcript_repr": repr(transcript)})
             print("No speech detected. Try again.")
         except sr.UnknownValueError:
+            debug_logg("unknown_value", {"attempt": attempt, "audio_bytes": len(audio.get_raw_data())})
             print("Sorry, I did not understand that. Try again.")
             continue
-        except sr.RequestError:
+        except sr.RequestError as e:
+            debug_logg("request_error", {"error": str(e)})
             print("Speech Recognition service is not available. Try again.")
             continue
 
