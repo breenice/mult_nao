@@ -30,14 +30,13 @@ def perceive_image(root: Path, agent_name: str, user_query: str) -> str:
         image_b64 = base64.b64encode(image_path.read_bytes()).decode("utf-8")
     except OSError:
         return ""
-    prompt = PROMPTS["perception_vlm_system"]
+    prompt = PROMPTS["perception_vlm_system"].format(user_query=user_query)
     response = _vlm_client.chat.completions.create(
         model=VLM_MODEL,
         messages=[
             {"role": "system", "content": prompt},
             {"role": "user", "content": [
                 {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"}},
-                {"type": "text", "text": user_query},
             ]},
         ],
     )
