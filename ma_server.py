@@ -229,10 +229,9 @@ _LISTEN_PHRASE_TIME_LIMIT = 10
 _LISTEN_MAX_EMPTY_RETRIES = 5
 #
 _recognizer = sr.Recognizer()
-_recognizer.dynamic_energy_threshold = False
-_recognizer.energy_threshold = 300  # fixed threshold; tune for your environment
-_recognizer.pause_threshold = 0.5   # faster end-of-speech detection (default 0.8)
-_listen_calibrated = False
+_recognizer.dynamic_energy_threshold = True
+_recognizer.energy_threshold = 400   # starting threshold tune it
+_recognizer.pause_threshold = 0.8    # default; gives user time to breathe between words
 
 
 def debug_logg(msg, data=None):
@@ -243,25 +242,8 @@ def debug_logg(msg, data=None):
 
 
 def listen_for_human_input(prompt: str) -> str:
-    # record from microphone until user stops speaking, when --listen is set
-    # transcribe with Google Speech Recognition
-    global _listen_calibrated
-
-
-    debug_logg("listen_entry", {"calibrated": _listen_calibrated, "energy_threshold": _recognizer.energy_threshold, "pause_threshold": _recognizer.pause_threshold, "dynamic": _recognizer.dynamic_energy_threshold})
-
-    # one-time noise calibration on first call
-    if not _listen_calibrated:
-        print("[Listen] Calibrating for ambient noise (1s)...")
-        try:
-            with sr.Microphone() as source:
-                _recognizer.adjust_for_ambient_noise(source, duration=1)
-            debug_logg("calibration_done", {"energy_threshold_after": _recognizer.energy_threshold})
-            print("[Listen] Calibrated. Energy threshold = %d" % _recognizer.energy_threshold)
-        except OSError as e:
-            debug_logg("calibration_failed", {"error": str(e)})
-            print("[Listen] Calibration failed: %s (using default threshold)" % e)
-        _listen_calibrated = True
+    """Record from microphone until user stops speaking, transcribe with Google Speech Recognition."""
+    debug_logg("listen_entry", {"energy_threshold": _recognizer.energy_threshold, "pause_threshold": _recognizer.pause_threshold, "dynamic": _recognizer.dynamic_energy_threshold})
 
     try:
         _mic_info = {"default_index": sr.Microphone.list_microphone_names()[:5]}
