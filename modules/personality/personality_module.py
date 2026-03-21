@@ -37,22 +37,31 @@ class PersonalityEngine:
             with open(self.personality_path, "r") as f:
                 self.personality = json.load(f)
 
-    def trait_text(self, trait_key:str, level: int) -> str:
+    def trait_text(self, trait_key: str, level: int) -> str:
         pos = self.big5["big5"][trait_key]["pos"]
         neg = self.big5["big5"][trait_key]["neg"]
+        label = trait_key.replace("_", " ").title()
 
+        # OCEAN 1–5: poles are maximally distinct; 2 vs 4 are clear leans; 3 is neutral.
         if level == 3:
-            return ""
-        elif level == 1:
-            return f"EXTREMELY {neg}"
-        elif level == 2:
-            return f"low {neg}"
-        elif level == 4:
-            return f"low {pos}"
-        elif level == 5:
-            return f"EXTREMELY {pos}"
-        else:
-            raise ValueError("Trait level must be 1–5")
+            return (
+                f"{label} (3/5, neutral): Balance both poles; avoid strong extremes on this dimension."
+            )
+        if level == 1:
+            return (
+                f"{label} (1/5, strong LOW end of this OCEAN dimension): {neg} "
+                f"Make this obvious in speech and actions."
+            )
+        if level == 2:
+            return f"{label} (2/5, lean toward LOW end): {neg}"
+        if level == 4:
+            return f"{label} (4/5, lean toward HIGH end): {pos}"
+        if level == 5:
+            return (
+                f"{label} (5/5, strong HIGH end of this OCEAN dimension): {pos} "
+                f"Make this obvious in speech and actions."
+            )
+        raise ValueError("Trait level must be 1–5")
 
     def get_traits_raw(self) -> dict:
         """Return raw trait values (o, c, e, a, n) as ints 1-5 for turn manager / anti-social check."""
@@ -86,8 +95,6 @@ class PersonalityEngine:
         }
 
     def to_prompt_text(self) -> str:
-        """Final text for LLM prompts"""
-        return "\n".join(
-            f"{k}: {v}" for k, v in self.get_big5_vals().items() if v
-        )
+        """Final text for LLM prompts (all five OCEAN lines; level 3 is explicit neutral)."""
+        return "\n".join(f"{k}: {v}" for k, v in self.get_big5_vals().items())
 
