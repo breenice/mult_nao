@@ -10,7 +10,7 @@ import zmq
 
 from openai import OpenAI
 
-from modules.memory.memory_agent import MemoryAgent
+from modules.memory.memory_agent import MemoryAgent, NoMemoryAgent
 from modules.llm.input_names import ensure_session_folder, get_session_dir
 from autogen_agentchat.agents import AssistantAgent, UserProxyAgent
 from autogen_agentchat.conditions import TextMentionTermination
@@ -43,7 +43,7 @@ with open(_PROMPTS_JSON_PATH, "r") as f:
 class NaoAgent(AssistantAgent):
     # AssistantAgent subclass for NAO robots
 
-    def __init__(self, personality: PersonalityEngine, memory: MemoryAgent,
+    def __init__(self, personality: PersonalityEngine, memory: MemoryAgent | NoMemoryAgent,
                  session_logger: "SessionLogger", **kwargs):
         super().__init__(**kwargs)
         self.personality = personality
@@ -75,7 +75,7 @@ openai_client = OpenAI()
 
 
 # ====== NAO Agent Factory (autogen agents from config: robot name, ip, personality) ======
-def create_nao_agent(agent_config: dict, root: Path, agent_index: int, socket, session_context: Optional[dict] = None, all_agent_names: Optional[List[str]] = None):
+def create_nao_agent(agent_config: dict, root: Path, agent_index: int, socket, session_context: Optional[dict] = None, all_agent_names: Optional[List[str]] = None, memory_enabled: bool = True):
     # agent_config: name (physical robot name), ip, bigo_personality. All paths and identity use this name.
     # Persistent data: session/<robot_name>/ (personality.json, memory db, see.jpg, sound.wav, conversation.jsonl)
     robot_name = str(agent_config.get("name", "Agent")).strip()
@@ -88,7 +88,11 @@ def create_nao_agent(agent_config: dict, root: Path, agent_index: int, socket, s
     session_logger = SessionLogger(root, robot_name)
 
     personality = PersonalityEngine(big5_path=DEFAULT_BIG5_PATH, personality_path=personality_path)
-    memory = MemoryAgent(agent_name=robot_name, db_path=memory_path)
+    memory: MemoryAgent | NoMemoryAgent
+    if memory_enabled:
+        memory = MemoryAgent(agent_name=robot_name, db_path=memory_path)
+    else:
+        memory = NoMemoryAgent()
     personality_text = personality.to_prompt_text()
 
     async def send_for_this_agent(tool: str, args: dict):
@@ -188,7 +192,7 @@ def _load_agents_from_config(path: Path) -> List[dict]:
     return []
 
 
-def _parse_agent_args() -> Tuple[List[dict], bool]:
+def _parse_agent_args() -> Tuple[List[dict], bool, bool]:
     root = Path(__file__).resolve().parent
     default_config_path = root / "config" / "agent_config.json"
     parser = argparse.ArgumentParser(
@@ -211,6 +215,11 @@ def _parse_agent_args() -> Tuple[List[dict], bool]:
         action="store_true",
         help="Use microphone for human turn: record until silence, transcribe with Whisper.",
     )
+    parser.add_argument(
+        "--no-memory",
+        action="store_true",
+        help="Disable long-term memory (no Chroma/LangGraph memory agent).",
+    )
     args = parser.parse_args()
     if args.agent:
         robot_names = [str(r).strip() for r in args.agent]
@@ -220,7 +229,7 @@ def _parse_agent_args() -> Tuple[List[dict], bool]:
         ]
     else:
         agents_list = _load_agents_from_config(args.config)
-    return agents_list, args.listen
+    return agents_list, args.listen, not args.no_memory
 
 
 _LISTEN_WAV_PATH = Path(__file__).resolve().parent / "input" / "listen.wav"
@@ -270,7 +279,7 @@ def listen_for_human_input(prompt: str) -> str:
     return input(prompt)
 
 
-async def multi_nao_chat(agents_list: List[dict], use_listen: bool = False):
+async def multi_nao_chat(agents_list: List[dict], use_listen: bool = False, memory_enabled: bool = True):
     if not agents_list:
         raise ValueError("give at least one agent (from config/agent_config.json or --agent ROBOT)")
     root = Path(__file__).resolve().parent
@@ -279,7 +288,7 @@ async def multi_nao_chat(agents_list: List[dict], use_listen: bool = False):
     all_agent_names = [str(ac.get("name", "Agent")).strip() for ac in agents_list]
     nao_agents = []
     for i, agent_config in enumerate(agents_list):
-        nao_agents.append(create_nao_agent(agent_config, root, i, sock, session_context=session_context, all_agent_names=all_agent_names))
+        nao_agents.append(create_nao_agent(agent_config, root, i, sock, session_context=session_context, all_agent_names=all_agent_names, memory_enabled=memory_enabled))
 
     nao_names = [a.name for a in nao_agents]
     name_to_d_personality: Dict[str, str] = {a.name: (a.description or "") for a in nao_agents}
@@ -291,6 +300,7 @@ async def multi_nao_chat(agents_list: List[dict], use_listen: bool = False):
         root=root,
         openai_client=openai_client,
         prompts=PROMPTS,
+        memory_enabled=memory_enabled,
     )
 
     input_func = listen_for_human_input if use_listen else input
@@ -328,5 +338,5 @@ async def multi_nao_chat(agents_list: List[dict], use_listen: bool = False):
 
 
 if __name__ == "__main__":
-    agents_list, use_listen = _parse_agent_args()
-    asyncio.run(multi_nao_chat(agents_list, use_listen))
+    agents_list, use_listen, memory_enabled = _parse_agent_args()
+    asyncio.run(multi_nao_chat(agents_list, use_listen, memory_enabled))

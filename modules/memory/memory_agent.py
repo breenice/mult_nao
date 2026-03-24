@@ -23,6 +23,14 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 ios_name = platform.system()
 CLEAR_CMD = 'cls' if ios_name == 'Windows' else 'clear'
 
+
+class NoMemoryAgent:
+    # Long-term memory disabled: no DB, embeddings, or graph
+
+    def run_once(self, user_input: str) -> str:
+        return ""
+
+
 class MemoryAgent:
     def __init__(
         self,

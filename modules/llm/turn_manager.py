@@ -159,13 +159,14 @@ class LLMTurnManager:
     # S_t = {i | r_i,t >= theta}. Optional top-K constraint applied.
     # Qualified agents speak sequentially in descending score order.
 
-    def __init__(self, nao_agents: List["NaoAgent"], nao_names: List[str], name_to_d_personality: Dict[str, str], root: Path, openai_client, prompts: dict):
+    def __init__(self, nao_agents: List["NaoAgent"], nao_names: List[str], name_to_d_personality: Dict[str, str], root: Path, openai_client, prompts: dict, memory_enabled: bool = True):
         self.nao_agents = nao_agents
         self.nao_names = nao_names
         self.name_to_d_personality = name_to_d_personality
         self.root = root
         self.openai_client = openai_client
         self.prompts = prompts
+        self.memory_enabled = memory_enabled
         self.current_round_qualified: List[str] = []
         self.round_state: Dict[str, int] = {"index": 0}
 
@@ -188,32 +189,44 @@ class LLMTurnManager:
             ])
             perception_context: Dict[str, str] = dict(zip(self.nao_names, perception_results))
 
-            # Memory recall + VLM scoring in parallel
             n = len(self.nao_agents)
-            all_results = await asyncio.gather(
-                # memory recall for each agent (N tasks) with user query and per-agent perception context
-                *[asyncio.to_thread(
-                    agent.memory.run_once,
-                    f"User query: {context_str}\nPerception context: {perception_context[agent.name]}")
-                  for agent in self.nao_agents],
-                # VLM scoring for each agent (N tasks)
-                *[asyncio.to_thread(
-                    _vlm_score_response_sync,
-                    get_session_dir(self.root, name) / "see.jpg",
-                    context_str, name,
-                    self.name_to_d_personality[name],
-                    self.openai_client,
-                    self.prompts,
-                  )
-                  for name in self.nao_names],
-            )
-            memory_results = list(all_results[:n])
-            scores = list(all_results[n:])  # second half = VLM scores
-
-            # Store latest perception and memory context on each agent
-            for agent, perception, mem_result in zip(self.nao_agents, perception_results, memory_results):
-                agent.perception = perception or ""
-                agent.memory_context = mem_result or ""
+            if self.memory_enabled:
+                # Memory recall + VLM scoring in parallel
+                all_results = await asyncio.gather(
+                    *[asyncio.to_thread(
+                        agent.memory.run_once,
+                        f"User query: {context_str}\nPerception context: {perception_context[agent.name]}")
+                      for agent in self.nao_agents],
+                    *[asyncio.to_thread(
+                        _vlm_score_response_sync,
+                        get_session_dir(self.root, name) / "see.jpg",
+                        context_str, name,
+                        self.name_to_d_personality[name],
+                        self.openai_client,
+                        self.prompts,
+                      )
+                      for name in self.nao_names],
+                )
+                memory_results = list(all_results[:n])
+                scores = list(all_results[n:])
+                for agent, perception, mem_result in zip(self.nao_agents, perception_results, memory_results):
+                    agent.perception = perception or ""
+                    agent.memory_context = mem_result or ""
+            else:
+                scores = await asyncio.gather(*[
+                    asyncio.to_thread(
+                        _vlm_score_response_sync,
+                        get_session_dir(self.root, name) / "see.jpg",
+                        context_str, name,
+                        self.name_to_d_personality[name],
+                        self.openai_client,
+                        self.prompts,
+                    )
+                    for name in self.nao_names
+                ])
+                for agent, perception in zip(self.nao_agents, perception_results):
+                    agent.perception = perception or ""
+                    agent.memory_context = ""
 
             name_score_pairs = list(zip(self.nao_names, scores))
 
@@ -241,16 +254,19 @@ class LLMTurnManager:
             self.round_state["index"] = 1
             return self.current_round_qualified[0]
 
-        # robot agent just spoke, inject what it said into its memory 
+        # robot agent just spoke, inject what it said into its memory
         last_robot_msg = _message_text(thread[-1]) if thread else ""
         last_robot_name = _message_source_name(thread[-1]) if thread else None
         if last_robot_name and last_robot_msg:
             for agent in self.nao_agents:
                 if agent.name == last_robot_name:
-                    mem_result = await asyncio.to_thread(
-                        agent.memory.run_once,
-                        f"{agent.name} said: {last_robot_msg}")
-                    agent.memory_context = mem_result or ""
+                    if self.memory_enabled:
+                        mem_result = await asyncio.to_thread(
+                            agent.memory.run_once,
+                            f"{agent.name} said: {last_robot_msg}")
+                        agent.memory_context = mem_result or ""
+                    else:
+                        agent.memory_context = ""
                     break
 
         if self.round_state["index"] < len(self.current_round_qualified):
