@@ -19,6 +19,7 @@ from autogen_agentchat.messages import BaseChatMessage, BaseAgentEvent, TextMess
 from autogen_agentchat.base import Response
 from autogen_core.tools import FunctionTool
 from autogen_core import CancellationToken
+from autogen_core.model_context import BufferedChatCompletionContext
 
 from modules.personality.personality_module import PersonalityEngine
 from modules.llm.turn_manager import LLMTurnManager, _message_source_name, _message_text
@@ -142,7 +143,8 @@ def create_nao_agent(agent_config: dict, root: Path, agent_index: int, socket, s
         tool_list_str=tool_list_str,
     )
 
-    agent = NaoAgent(
+    # No-memory mode: only use the last chat message (not full chat history)
+    nao_kwargs: Dict = dict(
         personality=personality,
         memory=memory,
         session_logger=session_logger,
@@ -154,6 +156,10 @@ def create_nao_agent(agent_config: dict, root: Path, agent_index: int, socket, s
         reflect_on_tool_use=True,
         model_client_stream=True,
     )
+    if not memory_enabled:
+        nao_kwargs["model_context"] = BufferedChatCompletionContext(buffer_size=1)
+
+    agent = NaoAgent(**nao_kwargs)
     return agent
 
 
