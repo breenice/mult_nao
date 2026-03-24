@@ -1,10 +1,10 @@
 # M2HRI — Multi-NAO HRI
 
-Multi-robot human-robot interaction: an LLM server drives multiple NAO agents that speak, gesture, and act, while a NAO client receives commands and runs them on physical (or simulated) robots. Each agent has its own personality, long-term memory, and optional vision.
+Multi-robot human-robot interaction: an LLM server drives multiple NAO agents that speak, gesture, and act, while a NAO client receives commands and runs them on physical (or simulated) robots. Each agent has its own personality, optional long-term memory, and optional vision.
 
 ---
 
-- **ma_server.py** — AutoGen `SelectorGroupChat` with a `UserProxyAgent` (human) and one `AssistantAgent` per robot. A turn manager decides which agents respond each round. Each agent has tools for NAO actions (speak, wave, nod, walk, etc.), long-term memory (recall/save via ChromaDB), and vision (reason about camera images).
+- **ma_server.py** — AutoGen `SelectorGroupChat` with a `UserProxyAgent` (human) and one `AssistantAgent` per robot. A turn manager decides which agents respond each round. Each agent has tools for NAO actions (speak, wave, nod, walk, etc.), optional long-term memory (ChromaDB + LangGraph memory agent; disable with `--no-memory`), and vision (reason about camera images).
 - **ma_clients.py** — ZMQ REP server that receives JSON `{tool, args}` messages and dispatches them to physical NAOs via NaoQi, or prints them in text mode.
 
 ---
@@ -116,7 +116,7 @@ Shared config loaded by both server and client: `NAO_BASE_PORT` (default 5555), 
 All persistent data is stored under `session/<robot-name>/`:
 
 | `personality.json` | Big Five traits (auto-generated from `agent_config.json`). |
-| `memory/` | ChromaDB long-term memory (semantic, episodic, procedural). Persists across conversations. |
+| `memory/` | ChromaDB long-term memory (semantic, episodic, procedural). Created and used only when memory is enabled (default). Not used with `--no-memory`. |
 | `see.jpg` | Latest camera frame (written by client camera thread). |
 | `facing.txt` | Whether a human face is detected (`true`/`false`). |
 | `conversation_*.jsonl` | Per-session conversation log. |
@@ -127,9 +127,10 @@ All persistent data is stored under `session/<robot-name>/`:
 
 Each agent has the following tools available every turn:
 
-**Memory tools:**
-- `recall_memory(query)` — Search long-term memory before responding. Called first every turn.
-- `save_memory(memory, memory_type)` — Store new facts after responding. Types: `semantic` (facts), `episodic` (preferences), `procedural` (instructions).
+**Memory (default; skipped with `--no-memory`):** The turn manager runs the memory agent each round to inject `[Memory context]` into the chat (recall before the agent responds, and update after the robot speaks). This is not separate `recall_memory` / `save_memory` tools on the NAO tool list—the pipeline is internal to the server when memory is enabled.
+
+- With long-term memory **on** (default): prior context is retrieved from ChromaDB via the LangGraph memory agent.
+- With **`--no-memory`**: no ChromaDB, no memory agent graph, and no `[Memory context]` injections—agents rely on personality, perception, and the current thread only.
 
 **Action tools:**
 - `speak(message)` — Text-to-speech.
@@ -156,7 +157,7 @@ Each round follows this pattern:
 2. **Turn manager** determines which agents respond:
    - **General message** (e.g. "hello everyone") — all agents respond in config order.
    - **Directed message** (e.g. "ANGEL, what do you think?") — only the named agent responds.
-3. **Each qualified agent** runs: `recall_memory` -> `speak`/action -> `save_memory`.
+3. **Each qualified agent** responds: with memory enabled (default), the server has already run memory recall so `[Memory context]` is present; the agent then calls `speak`/other actions. With `--no-memory`, there is no memory step—only perception and personality inform the reply.
 4. **Control returns to human** for the next round.
 
 The conversation runs for 5 rounds by default (configurable via `num_rounds` in `ma_server.py`).
@@ -185,14 +186,25 @@ python ma_clients.py --config config/agent_config.json --slot 1   # second agent
 python ma_server.py
 ```
 
+**No memory mode** (lighter setup, no ChromaDB / LangGraph memory on disk):
+
+```bash
+python ma_server.py --no-memory
+```
+
 **Options:**
+
+| Flag | Description |
+| --- | --- |
 | `--agent ROBOT` | Override config with specific robots (repeatable). |
 | `--config PATH` | Custom agent config JSON path. |
 | `--listen` | Use microphone for human input (records until silence, transcribes with Google Speech Recognition). |
+| `--no-memory` | Disable long-term memory: no ChromaDB, no LangGraph memory agent, no `[Memory context]` injection. |
 
 ---
 
 ## Summary/Quickstart
-| Driver file  | default  | optional flags  |
-| **ma_server** | `config/agent_config.json` | `--config`, `--agent ROBOT`, `--listen` |
+| Driver file | default | optional flags |
+| --- | --- | --- |
+| **ma_server** | `config/agent_config.json` | `--config`, `--agent ROBOT`, `--listen`, `--no-memory` |
 | **ma_clients** | `config/agent_config.json` | `--config`, `--agent`, `--multi`, `--slot N`, `--connection text` |
