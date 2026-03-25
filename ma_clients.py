@@ -3,14 +3,11 @@
 import json
 import struct
 import zmq
-import cv2
 import os
 import sys
 import threading
-import numpy as np
 import signal
 from collections import defaultdict
-from naoqi import ALProxy
 import argparse
 import time
 
@@ -18,7 +15,18 @@ import time
 PROJECT_ROOT = os.path.dirname(os.path.realpath(os.path.abspath(__file__)))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
-import modules.actions.actions as actions
+
+# lazy load: NaoQi, actions, cv2, numpy only loaded when --connection speech (no physical NAO robot)
+_nao_lazy = None
+
+
+def _lazy_nao():
+    global _nao_lazy
+    if _nao_lazy is None:
+        from naoqi import ALProxy
+        import modules.actions.actions as actions
+        _nao_lazy = (ALProxy, actions)
+    return _nao_lazy
 try:
     from config import nao_config
     ROBOT_IPS = nao_config.ROBOT_IPS
@@ -32,7 +40,7 @@ ZMQ_PORT = 9559
 timestep_buffer = defaultdict(list)
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--connection", choices=["text", "speech"], default="speech", help="text: dummy IP, receive/print commands only; speech: connect to physical NAO")
+parser.add_argument("--connection", choices=["text", "speech"], default="speech", help="text: no NaoQi; print commands only. speech: NaoQi + physical NAO")
 parser.add_argument("--mode", choices=["print", "execute"], default="execute")
 parser.add_argument("--port", type=int, default=None, help="ZMQ port (default: try from %s)" % _BASE_PORT)
 parser.add_argument("--robot", type=str, default="ANGEL")
@@ -104,6 +112,8 @@ def _ensure_session_folder(root, robot_name):
 
 def _capture_image_loop(vision_svc, vision_clt, session_folder, running_flag):
     # camera capture loop for one robot. Runs in a daemon thread
+    import cv2
+    import numpy as np
     while running_flag["running"]:
         try:
             nao_image = vision_svc.getImageRemote(vision_clt)
@@ -155,6 +165,7 @@ def run_multi_port(args, agent_list=None):
     # --- Per-robot camera threads ---
     vision_clients = []  # for cleanup on shutdown
     if connection == "speech" and mode == "execute":
+        ALProxy, actions = _lazy_nao()
         for robot_name in agent_list:
             if robot_name not in ROBOT_IPS:
                 continue
@@ -214,6 +225,7 @@ def run_multi_port(args, agent_list=None):
                 continue
             if mode == "execute":
                 try:
+                    ALProxy, actions = _lazy_nao()
                     robot_ip = ROBOT_IPS[robot_name]
                     actions.init(robot_ip, ZMQ_PORT)
                     arg_dict = dict(args)
@@ -317,6 +329,8 @@ def shutdown(sig, frame):
 
 
 def capture_image():
+    import cv2
+    import numpy as np
     while running:
         try:
             nao_image = vision_service.getImageRemote(vision_client)
@@ -347,6 +361,7 @@ def capture_image():
 
 
 def execute_timestep(timestep, calls):
+    ALProxy, actions = _lazy_nao()
     print("\nExecuting timestep "+str(timestep)+" ---")
     threads = []
 
@@ -401,6 +416,7 @@ def socket_send():
             socket.send_string("Message received by NAO")
         elif mode == "execute":
             try:
+                ALProxy, actions = _lazy_nao()
                 for k, v in args.items():
                     if isinstance(v, unicode):
                         args[k] = v.encode("utf-8")
@@ -416,6 +432,7 @@ def socket_send():
 
 
 if connection == "speech":
+    ALProxy, actions = _lazy_nao()
     actions.init(ROBOT_IP, ZMQ_PORT)
     if mode == "execute":
         actions.track_face(True)

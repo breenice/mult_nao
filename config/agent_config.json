@@ -4,22 +4,22 @@
       "name": "SAM",
       "ip": "192.168.1.7",
       "bigo_personality": {
-        "openness": 5,
-        "conscientiousness": 5,
-        "extraversion": 5,
-        "agreeableness": 5,
-        "neuroticism": 1
+        "openness": 3,
+        "conscientiousness": 3,
+        "extraversion": 3,
+        "agreeableness": 3,
+        "neuroticism": 3
       }
     },
     {
         "name": "JOURNEY",
         "ip": "192.168.1.55",
         "bigo_personality": {
-          "openness": 1,
-          "conscientiousness": 1,
-          "extraversion": 1,
-          "agreeableness": 1,
-          "neuroticism": 5
+          "openness": 3,
+          "conscientiousness": 3,
+          "extraversion": 3,
+          "agreeableness": 3,
+          "neuroticism": 3
         }
     }
   ]
