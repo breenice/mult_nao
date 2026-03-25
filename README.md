@@ -201,6 +201,18 @@ python ma_server.py --no-memory
 | `--listen` | Use microphone for human input (records until silence, transcribes with Google Speech Recognition). |
 | `--no-memory` | Disable long-term memory: no ChromaDB, no LangGraph memory agent, no `[Memory context]` injection. |
 
+### Debugging physical NAO robot connection (no LLM)
+
+Use [`scripts/debug_nao.py`](scripts/debug_nao.py) to isolate NaoQi and the ZMQ path without LangChain or AutoGen. It runs: (1) NaoQi ping via Python 2, (2) direct `ALTextToSpeech.say` (“hello world”), (3) ZMQ `speak` JSON like `ma_server`, and optionally (4) an interactive speak loop. Requires `pip install pyzmq` in the same Python 3 environment you use to run the script.
+
+Start **`ma_clients.py`** on the matching port before steps 3–4 (e.g. `--connection speech --mode execute` for real motion, or `--connection text` to verify only the reply string). Example:
+
+```bash
+python3 scripts/debug_nao.py --robot-ip <NAO_IP> --zmq-port 5555 --interactive
+```
+
+Use `--skip-naoqi` if you only have Python 3 (ZMQ tests only). Use `--no-include-agent` if your client is single-robot mode (JSON without `agent`).
+
 ---
 
 ## Summary/Quickstart
