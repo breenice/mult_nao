@@ -42,6 +42,22 @@ Multi-robot human-robot interaction: an LLM server drives multiple NAO agents th
 
 ---
 
+## No Coordination Mode (one robot each)
+
+Run two separate `ma_server` + `ma_clients` pairs (one physical robot per pair; each pair uses its own ZMQ port). Use the **same** TCP port on the client bind (`--port`) and server connect (`--zmq-port`). If the LLM runs on a different machine than `ma_clients`, set `--zmq-host` on the server to the address where the client is reachable and ensure the firewall allows that TCP port.
+
+```bash
+# Terminal 1 — robot SAM (NAO / Python 2)
+python2 ma_clients.py --connection speech --mode execute --robot SAM --robot-ip 192.168.x.x --port 5555
+
+# Terminal 2 — LLM (Python 3)
+python3 ma_server.py --agent SAM --robot-ip 192.168.x.x --zmq-port 5555
+```
+
+Use one `--agent` name per server process so the turn manager only drives one NAO agent.
+
+---
+
 ## Configuration
 
 ### `config/agent_config.json`
@@ -200,11 +216,14 @@ python ma_server.py --no-memory
 | `--config PATH` | Custom agent config JSON path. |
 | `--listen` | Use microphone for human input (records until silence, transcribes with Google Speech Recognition). |
 | `--no-memory` | Disable long-term memory: no ChromaDB, no LangGraph memory agent, no `[Memory context]` injection. |
+| `--zmq-port PORT` | ZMQ port for `ma_clients` (default: `NAO_BASE_PORT` from `config/nao_config.py`). |
+| `--zmq-host HOST` | Host where `ma_clients` listens (default: `127.0.0.1`). |
+| `--robot-ip IP` | Override robot IP when exactly one `--agent` is given. |
 
 ---
 
 ## Summary/Quickstart
 | Driver file | default | optional flags |
 | --- | --- | --- |
-| **ma_server** | `config/agent_config.json` | `--config`, `--agent ROBOT`, `--listen`, `--no-memory` |
-| **ma_clients** | `config/agent_config.json` | `--config`, `--agent`, `--multi`, `--slot N`, `--connection text` |
+| **ma_server** | `config/agent_config.json` | `--config`, `--agent ROBOT`, `--listen`, `--no-memory`, `--zmq-port`, `--zmq-host`, `--robot-ip` |
+| **ma_clients** | `config/agent_config.json` | `--config`, `--agent`, `--multi`, `--slot N`, `--connection text`, `--robot-ip`, `--port` |

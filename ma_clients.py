@@ -40,6 +40,7 @@ parser.add_argument("--multi", action="store_true", help="run single-port server
 parser.add_argument("--config", type=str, default=None, help="Path to agent config JSON (for --multi or --slot). Default: project_root/config/agent_config.json")
 parser.add_argument("--slot", type=int, default=None, metavar="N", help="Single-port mode for slot N (0-based) from agents config; uses port BASE+N and that entry's robot")
 parser.add_argument("--agent", action="append", metavar="ROBOT", help="For --multi: robot name (repeatable, e.g. --agent ANGEL --agent SAM). Overrides --config when provided.")
+parser.add_argument("--robot-ip", type=str, default=None, metavar="IP", help="Override NaoQi robot IP (physical NAOs required)")
 
 # ----- Load agents from config: list of robot names (strings) only -----
 def _load_agents_from_file(path):
@@ -266,11 +267,17 @@ mode = args.mode
 ROBOT_NAME = args.robot
 
 # assume text connection (no physical robot)
+_robot_ip_cli = getattr(args, "robot_ip", None)
 if connection == "text":
     ROBOT_IP = "127.0.0.1"
     _use_text_behavior = True
+    if _robot_ip_cli:
+        print("[nao_client] --robot-ip ignored in text connection mode.")
 else:
-    if ROBOT_NAME in ROBOT_IPS:
+    if _robot_ip_cli:
+        ROBOT_IP = str(_robot_ip_cli).strip()
+        _use_text_behavior = False
+    elif ROBOT_NAME in ROBOT_IPS:
         ROBOT_IP = ROBOT_IPS[ROBOT_NAME]
         _use_text_behavior = False
     else:

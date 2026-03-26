@@ -89,20 +89,21 @@ NAO_SOCKET_HOST = "localhost"
 _nao_context = None
 
 
-def _create_nao_socket(port: int):
+def _create_nao_socket(port: int, host: Optional[str] = None):
     # create and connect a ZMQ REQ socket to host:port
     # returns socket or None on failure
     global _nao_context
     if _nao_context is None:
         _nao_context = zmq.Context()
+    bind_host = host or NAO_SOCKET_HOST
     try:
         sock = _nao_context.socket(zmq.REQ)
         sock.setsockopt(zmq.LINGER, 0)
         sock.setsockopt(zmq.RCVTIMEO, 30000) # 30 sec speaking timeout
-        sock.connect("tcp://%s:%s" % (NAO_SOCKET_HOST, port))
+        sock.connect("tcp://%s:%s" % (bind_host, port))
         return sock
     except Exception as e:
-        print("[LLM] NAO socket not available for port %s (%s). Actions will be printed only." % (port, e))
+        print("[LLM] NAO socket not available for %s:%s (%s). Actions will be printed only." % (bind_host, port, e))
         return None
 
 

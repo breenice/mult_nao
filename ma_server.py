@@ -198,7 +198,7 @@ def _load_agents_from_config(path: Path) -> List[dict]:
     return []
 
 
-def _parse_agent_args() -> Tuple[List[dict], bool, bool]:
+def _parse_agent_args() -> Tuple[List[dict], bool, bool, Optional[int], str]:
     root = Path(__file__).resolve().parent
     default_config_path = root / "config" / "agent_config.json"
     parser = argparse.ArgumentParser(
@@ -226,16 +226,41 @@ def _parse_agent_args() -> Tuple[List[dict], bool, bool]:
         action="store_true",
         help="Disable long-term memory (no Chroma/LangGraph memory agent).",
     )
+    parser.add_argument(
+        "--zmq-port",
+        type=int,
+        default=None,
+        metavar="PORT",
+        help="ZMQ port for ma_clients (default: NAO_BASE_PORT from config/nao_config.py).",
+    )
+    parser.add_argument(
+        "--zmq-host",
+        type=str,
+        default="127.0.0.1",
+        help="Host where ma_clients listens (default: 127.0.0.1).",
+    )
+    parser.add_argument(
+        "--robot-ip",
+        type=str,
+        default=None,
+        metavar="IP",
+        help="Override robot IP for a single --agent (must pass exactly one --agent).",
+    )
     args = parser.parse_args()
+    if args.robot_ip:
+        if not args.agent or len(args.agent) != 1:
+            raise SystemExit("--robot-ip requires exactly one --agent NAME")
     if args.agent:
         robot_names = [str(r).strip() for r in args.agent]
         agents_list = [
             {"name": r, "ip": ROBOT_IPS.get(r, "127.0.0.1"), "bigo_personality": None}
             for r in robot_names
         ]
+        if args.robot_ip:
+            agents_list[0]["ip"] = str(args.robot_ip).strip()
     else:
         agents_list = _load_agents_from_config(args.config)
-    return agents_list, args.listen, not args.no_memory
+    return agents_list, args.listen, not args.no_memory, args.zmq_port, args.zmq_host
 
 
 _LISTEN_WAV_PATH = Path(__file__).resolve().parent / "input" / "listen.wav"
@@ -285,11 +310,19 @@ def listen_for_human_input(prompt: str) -> str:
     return input(prompt)
 
 
-async def multi_nao_chat(agents_list: List[dict], use_listen: bool = False, memory_enabled: bool = True):
+async def multi_nao_chat(
+    agents_list: List[dict],
+    use_listen: bool = False,
+    memory_enabled: bool = True,
+    zmq_port: Optional[int] = None,
+    zmq_host: str = "127.0.0.1",
+):
     if not agents_list:
         raise ValueError("give at least one agent (from config/agent_config.json or --agent ROBOT)")
     root = Path(__file__).resolve().parent
-    sock = _create_nao_socket(NAO_BASE_PORT)
+    port = zmq_port if zmq_port is not None else NAO_BASE_PORT
+    print("[LLM] ZMQ REQ connecting to tcp://%s:%s" % (zmq_host, port))
+    sock = _create_nao_socket(port, zmq_host)
     session_context = {"round": 0}
     all_agent_names = [str(ac.get("name", "Agent")).strip() for ac in agents_list]
     nao_agents = []
@@ -344,5 +377,5 @@ async def multi_nao_chat(agents_list: List[dict], use_listen: bool = False, memo
 
 
 if __name__ == "__main__":
-    agents_list, use_listen, memory_enabled = _parse_agent_args()
-    asyncio.run(multi_nao_chat(agents_list, use_listen, memory_enabled))
+    agents_list, use_listen, memory_enabled, zmq_port, zmq_host = _parse_agent_args()
+    asyncio.run(multi_nao_chat(agents_list, use_listen, memory_enabled, zmq_port, zmq_host))
