@@ -99,16 +99,6 @@ Required nao configuration fields:
 | `ip` | Robot IP address (NaoQi). |
 | `bigo_personality` | Big Five traits (1-5). Seeds `session/<name>/personality.json` on first run. Personality shapes the agent's speaking style and behavior. |
 
-### `config/turn_manager.json`
-
-Option to toggle face attention criteria for turn-taking behavior:
-
-```json
-{
-  "require_facing_when_directed": false
-}
-```
-
 If `true`, a robot must have `facing.txt` set to `true` (from the camera thread) to respond to directed messages. Set to `false` for text-only mode.
 
 ### `config/nao_config.py`
@@ -216,4 +206,6 @@ python ma_server.py --no-memory
 | Driver file | default | optional flags |
 | --- | --- | --- |
 | **ma_server** | `config/agent_config.json` | `--config`, `--agent ROBOT`, `--listen`, `--no-memory`, `--zmq-port`, `--zmq-host`, `--robot-ip` |
+| **ma_clients** | `config/agent_config.json` | `--config`, `--agent`, `--multi`, `--slot N`, `--connection text`, `--robot-ip`, `--port` |
+, `--robot-ip` |
 | **ma_clients** | `config/agent_config.json` | `--config`, `--agent`, `--multi`, `--slot N`, `--connection text`, `--robot-ip`, `--port` |
