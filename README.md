@@ -1,9 +1,11 @@
 # M2HRI — Multi-NAO HRI
 
 Multi-robot human-robot interaction: an LLM server drives multiple NAO agents that speak, gesture, and act, while a NAO client receives commands and runs them on physical (or simulated) robots. Each agent has its own personality, optional long-term memory, and optional vision.
+Multi-robot human-robot interaction: an LLM server drives multiple NAO agents that speak, gesture, and act, while a NAO client receives commands and runs them on physical (or simulated) robots. Each agent has its own personality, optional long-term memory, and optional vision.
 
 ---
 
+- **ma_server.py** — AutoGen `SelectorGroupChat` with a `UserProxyAgent` (human) and one `AssistantAgent` per robot. A turn manager decides which agents respond each round. Each agent has tools for NAO actions (speak, wave, nod, walk, etc.), optional long-term memory (ChromaDB + LangGraph memory agent; disable with `--no-memory`), and vision (reason about camera images).
 - **ma_server.py** — AutoGen `SelectorGroupChat` with a `UserProxyAgent` (human) and one `AssistantAgent` per robot. A turn manager decides which agents respond each round. Each agent has tools for NAO actions (speak, wave, nod, walk, etc.), optional long-term memory (ChromaDB + LangGraph memory agent; disable with `--no-memory`), and vision (reason about camera images).
 - **ma_clients.py** — ZMQ REP server that receives JSON `{tool, args}` messages and dispatches them to physical NAOs via NaoQi, or prints them in text mode.
 
@@ -39,6 +41,22 @@ Multi-robot human-robot interaction: an LLM server drives multiple NAO agents th
 3. **Environment variables**
   - **NAO terminal:** export NaoQi paths as required for your setup.
   - **LLM terminal:** `export OPENAI_API_KEY=your_key`
+
+---
+
+## No Coordination Mode (one robot each)
+
+Run two separate `ma_server` + `ma_clients` pairs (one physical robot per pair; each pair uses its own ZMQ port). Use the **same** TCP port on the client bind (`--port`) and server connect (`--zmq-port`). If the LLM runs on a different machine than `ma_clients`, set `--zmq-host` on the server to the address where the client is reachable and ensure the firewall allows that TCP port.
+
+```bash
+# Terminal 1 — robot SAM (NAO / Python 2)
+python2 ma_clients.py --connection speech --mode execute --robot SAM --robot-ip 192.168.x.x --port 5555
+
+# Terminal 2 — LLM (Python 3)
+python3 ma_server.py --agent SAM --robot-ip 192.168.x.x --zmq-port 5555
+```
+
+Use one `--agent` name per server process so the turn manager only drives one NAO agent.
 
 ---
 
@@ -133,7 +151,9 @@ All persistent data is stored under `session/<robot-name>/`:
 
 | `personality.json` | Big Five traits (auto-generated from `agent_config.json`). |
 | `memory/` | ChromaDB long-term memory (semantic, episodic, procedural). Created and used only when memory is enabled (default). Not used with `--no-memory`. |
+| `memory/` | ChromaDB long-term memory (semantic, episodic, procedural). Created and used only when memory is enabled (default). Not used with `--no-memory`. |
 | `see.jpg` | Latest camera frame (written by client camera thread). |
+| `facing.txt` | Whether a human face is detected (`true`/`false`). |
 | `facing.txt` | Whether a human face is detected (`true`/`false`). |
 | `conversation_*.jsonl` | Per-session conversation log. |
 
@@ -143,6 +163,10 @@ All persistent data is stored under `session/<robot-name>/`:
 
 Each agent has the following tools available every turn:
 
+**Memory (default; skipped with `--no-memory`):** The turn manager runs the memory agent each round to inject `[Memory context]` into the chat (recall before the agent responds, and update after the robot speaks). This is not separate `recall_memory` / `save_memory` tools on the NAO tool list—the pipeline is internal to the server when memory is enabled.
+
+- With long-term memory **on** (default): prior context is retrieved from ChromaDB via the LangGraph memory agent.
+- With **`--no-memory`**: no ChromaDB, no memory agent graph, and no `[Memory context]` injections—agents rely on personality, perception, and the current thread only.
 **Memory (default; skipped with `--no-memory`):** The turn manager runs the memory agent each round to inject `[Memory context]` into the chat (recall before the agent responds, and update after the robot speaks). This is not separate `recall_memory` / `save_memory` tools on the NAO tool list—the pipeline is internal to the server when memory is enabled.
 
 - With long-term memory **on** (default): prior context is retrieved from ChromaDB via the LangGraph memory agent.
@@ -163,6 +187,9 @@ Each agent has the following tools available every turn:
 **Vision tool:**
 - `reason_with_vision(prompt)` — Analyze the camera image and describe what the robot sees. Chains into `speak()` automatically.
 
+**Vision tool:**
+- `reason_with_vision(prompt)` — Analyze the camera image and describe what the robot sees. Chains into `speak()` automatically.
+
 ---
 
 ## Turn Management
@@ -174,6 +201,7 @@ Each round follows this pattern:
    - **General message** (e.g. "hello everyone") — all agents respond in config order.
    - **Directed message** (e.g. "ANGEL, what do you think?") — only the named agent responds.
 3. **Each qualified agent** responds: with memory enabled (default), the server has already run memory recall so `[Memory context]` is present; the agent then calls `speak`/other actions. With `--no-memory`, there is no memory step—only perception and personality inform the reply.
+3. **Each qualified agent** responds: with memory enabled (default), the server has already run memory recall so `[Memory context]` is present; the agent then calls `speak`/other actions. With `--no-memory`, there is no memory step—only perception and personality inform the reply.
 4. **Control returns to human** for the next round.
 
 The conversation runs for 5 rounds by default (configurable via `num_rounds` in `ma_server.py`).
@@ -183,10 +211,22 @@ The conversation runs for 5 rounds by default (configurable via `num_rounds` in 
 ## Running
 
 ### 1. Start the NAO client (terminal 1)
+### 1. Start the NAO client (terminal 1)
 
+**Multi-agent mode (one process, all agents):**
 **Multi-agent mode (one process, all agents):**
 ```bash
 python ma_clients.py --multi --connection text
+```
+Loads agents from `config/agent_config.json`, binds a single ZMQ port, dispatches by agent index. Use `--connection text` for text-only (no physical robot).
+
+**Single robot (one process per robot):**
+```bash
+python ma_clients.py --config config/agent_config.json --slot 0   # first agent
+python ma_clients.py --config config/agent_config.json --slot 1   # second agent
+```
+
+### 2. Start the LLM server (terminal 2)
 ```
 Loads agents from `config/agent_config.json`, binds a single ZMQ port, dispatches by agent index. Use `--connection text` for text-only (no physical robot).
 
@@ -203,8 +243,13 @@ python ma_server.py
 ```
 
 **No memory mode** (lighter setup, no ChromaDB / LangGraph memory on disk):
+**No memory mode** (lighter setup, no ChromaDB / LangGraph memory on disk):
 
 ```bash
+python ma_server.py --no-memory
+```
+
+**Options:**
 python ma_server.py --no-memory
 ```
 
