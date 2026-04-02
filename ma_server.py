@@ -132,6 +132,7 @@ def create_nao_agent(agent_config: dict, root: Path, agent_index: int, socket, s
         params_schema = fn_def.get("parameters") or {}
         callable_fn = _make_nao_tool_with_signature(robot_name, fn_name, params_schema, send_for_this_agent)
         agent_tools.append(FunctionTool(callable_fn, description=description, name=fn_name))
+        tool_names.append(fn_name)
 
     tool_list_str = ", ".join(tool_names)
     teammates = ', '.join(n for n in all_agent_names if n != robot_name) if all_agent_names else 'teammates'

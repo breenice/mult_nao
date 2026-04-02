@@ -1,7 +1,6 @@
 #!/usr/bin/env python2
 # -*- coding: utf-8 -*-
 import json
-import struct
 import zmq
 import cv2
 import os
@@ -13,6 +12,7 @@ from collections import defaultdict
 from naoqi import ALProxy
 import argparse
 import time
+from modules.common.session_files import safe_folder_name, ensure_session_artifacts
 
 # Project root on path so modules package is found (robust to cwd/symlinks)
 PROJECT_ROOT = os.path.dirname(os.path.realpath(os.path.abspath(__file__)))
@@ -61,45 +61,13 @@ def _load_agents_from_file(path):
 
 # ----- Session folder per robot: session/<robot_name>/ (personality, see.jpg, sound.wav, memory) -----
 def _safe_folder_name(name):
-    return "".join(c if c.isalnum() or c in "._-" else "_" for c in name).strip("._") or "unnamed"
+    return safe_folder_name(name)
 
 def _ensure_session_folder(root, robot_name):
     # create session/<robot_name>/ with personality.json, see.jpg, sound.wav for persistent per-robot data.
     safe = _safe_folder_name(robot_name)
     folder = os.path.join(root, "session", safe)
-    if not os.path.isdir(folder):
-        os.makedirs(folder)
-    personality_path = os.path.join(folder, "personality.json")
-    if not os.path.isfile(personality_path):
-        default = {"self": {"scale": {"min": 1, "max": 5}, "traits": {"o": 3, "c": 3, "e": 3, "a": 3, "n": 3}}}
-        with open(personality_path, "w") as f:
-            json.dump(default, f, indent=2)
-    see_path = os.path.join(folder, "see.jpg")
-    if not os.path.isfile(see_path):
-        minimal_jpeg = (
-            b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00"
-            b"\xff\xdb\x00C\x00\x08\x06\x06\x07\x06\x05\x08\x07\x07\x07\t\t\x08\n\x0c\x14\r\x0c\x0b\x0b\x0c\x19\x12\x13\x0f\x14\x1d\x1a\x1f\x1e\x1d\x1a\x1c\x1c"
-            b" $.\' \",#\x1c\x1c(7),01444\x1f\'9=82<.7\xff\xc0\x00\x0b\x08\x00\x01\x00\x01\x01\x01\x11\x00\xff\xc4\x00\x1f\x00\x00\x01\x05\x01\x01\x01"
-            b"\x01\x01\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x01\x02\x03\x04\x05\x06\x07\x08\t\n\x0b\xff\xda\x00\x0c\x03\x01\x00\x02\x11\x03\x11\x00?\x00"
-            b"\xf5\xc3\xff\xd9"
-        )
-        with open(see_path, "wb") as f:
-            f.write(minimal_jpeg)
-    sound_path = os.path.join(folder, "sound.wav")
-    if not os.path.isfile(sound_path):
-        sample_rate = 8000
-        n_samples = sample_rate * 1
-        n_bytes = n_samples * 2
-        with open(sound_path, "wb") as f:
-            f.write("RIFF")
-            f.write(struct.pack("<I", 36 + n_bytes))
-            f.write("WAVE")
-            f.write("fmt ")
-            f.write(struct.pack("<I", 16))
-            f.write(struct.pack("<HHIIHH", 1, 1, sample_rate, sample_rate * 2, 2, 16))
-            f.write("data")
-            f.write(struct.pack("<I", n_bytes))
-            f.write(b"\x00" * n_bytes)
+    ensure_session_artifacts(folder, personality=None, overwrite_personality=False)
     return folder
 
 
